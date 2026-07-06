@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.local
+.git-rewrite
+
+# Deploy scripts and secret files — never commit these
+deploy.bat
+deploy-ps.ps1
+set-mux-webhook-secret.ps1
+VERCEL_ENV_VARS.txt
+DEPLOY_SHA.txt
+GIT_AUTH_USER.txt
+PUSH_OUTPUT.txt
+VERCEL_OUTPUT.txt
