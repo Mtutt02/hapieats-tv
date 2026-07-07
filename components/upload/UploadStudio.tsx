@@ -7,7 +7,7 @@ import {
   UploadCloud, Film, AlertCircle, X, Globe, Tv,
   Scissors, Wand2, Tag, Eye, DollarSign, ArrowRight, CheckCircle2,
   ChevronLeft, ChevronRight, Clock, Sparkles, Share2, Lock,
-  Hash, Image, Music, Crop,
+  Hash, Image, Music, Crop, Type, Mic,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,7 +15,8 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import VideoEditor from './VideoEditor'
+import EditorPanel from '@/components/editor/EditorPanel'
+import type { EditorOutput } from '@/components/editor/types'
 import { useUploadStore } from '@/lib/upload-store'
 
 interface Channel { id: string; name: string; slug: string }
@@ -97,6 +98,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
   const [step, setStep] = useState<Step>('file')
   const [file, setFile] = useState<File | null>(null)
   const [clip, setClip] = useState<ClipInfo | null>(null)
+  const [editorOutput, setEditorOutput] = useState<EditorOutput | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
   const [stationId] = useState<string | null>(preselectedStation?.id ?? null)
   const [uploadedVideoId, setUploadedVideoId] = useState<string | null>(null)
@@ -120,6 +122,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
     }
     setFile(f)
     setClip(null)
+    setEditorOutput(null)
     setStep('trim')
   }, [])
 
@@ -136,6 +139,10 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
 
     const tagsArray = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : []
 
+    const overlaysJson = (editorOutput?.overlays && editorOutput.overlays.length > 0)
+      ? JSON.stringify(editorOutput.overlays)
+      : null
+
     await uploadStore.startUpload(file, {
       title: title.trim(),
       description: description.trim() || undefined,
@@ -148,6 +155,8 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
       stationId: stationId ?? null,
       clipStart: clip?.startTime ?? null,
       clipEnd: clip?.endTime ?? null,
+      overlays: overlaysJson,
+      musicTrack: editorOutput?.musicTrack ?? null,
     })
 
     if (uploadStore.status !== 'error') {
@@ -161,6 +170,12 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
   const videoDuration = clip
     ? `Clipped: ${formatDuration(clip.startTime)} — ${formatDuration(clip.endTime)} (${Math.floor(clip.duration / 60)}:${String(Math.floor(clip.duration % 60)).padStart(2, '0')})`
     : 'Full video'
+
+  const hasEditorAddons = editorOutput && (
+    (editorOutput.overlays && editorOutput.overlays.length > 0) ||
+    editorOutput.musicTrack ||
+    editorOutput.voiceoverBlob
+  )
 
   if (step === 'uploading' || step === 'done') {
     return (
@@ -270,25 +285,30 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
         <div className="space-y-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Crop className="h-5 w-5 text-primary" />
+              <Wand2 className="h-5 w-5 text-primary" />
               <div>
-                <h2 className="font-bold">Trim your video</h2>
-                <p className="text-xs text-zinc-500">Choose the best part — or skip to use the full thing</p>
+                <h2 className="font-bold">Edit your video</h2>
+                <p className="text-xs text-zinc-500">Trim, add text, music, voice over, and stickers</p>
               </div>
             </div>
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" onClick={() => { setFile(null); setStep('file') }} className="text-zinc-500">
                 <X className="h-4 w-4 mr-1" /> Discard
               </Button>
-              <Button variant="outline" size="sm" onClick={() => { setClip(null); setStep('details') }}>
-                Skip trim <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
             </div>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden">
-            <VideoEditor
+            <EditorPanel
               file={file}
-              onClipSelected={(s, e, d) => { setClip({ startTime: s, endTime: e, duration: d }); setStep('details') }}
+              onComplete={(output) => {
+                setEditorOutput(output)
+                setClip({
+                  startTime: output.clipStart,
+                  endTime: output.clipEnd,
+                  duration: output.clipEnd - output.clipStart,
+                })
+                setStep('details')
+              }}
               onCancel={() => { setFile(null); setStep('file') }}
             />
           </div>
@@ -310,12 +330,31 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
                   <span className="text-[11px] text-zinc-600">~{fileTimeLabel} to upload</span>
                 </div>
               </div>
+              {hasEditorAddons && (
+                <div className="flex flex-wrap gap-1.5 pt-2">
+                  {editorOutput?.overlays && editorOutput.overlays.length > 0 && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                      {editorOutput.overlays.length} overlay{editorOutput.overlays.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {editorOutput?.musicTrack && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+                      🎵 Music
+                    </span>
+                  )}
+                  {editorOutput?.voiceoverBlob && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+                      🎤 Voice over
+                    </span>
+                  )}
+                </div>
+              )}
               {file.size > 8 * 1024 ** 3 && (
                 <p className="text-[11px] text-amber-400/70">Large file — upload continues in the background.</p>
               )}
               <div className="flex gap-2 pt-1">
                 <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setStep('trim')}>
-                  <Scissors className="h-3 w-3 mr-1" /> Re-trim
+                  <Wand2 className="h-3 w-3 mr-1" /> Edit video
                 </Button>
                 <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-red-400"
                   onClick={() => { setFile(null); setStep('file') }}>
@@ -463,7 +502,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
 
             <div className="flex items-center justify-between pt-4 border-t border-zinc-800">
               <Button type="button" variant="ghost" onClick={() => setStep('trim')} className="text-zinc-500">
-                <ChevronLeft className="h-4 w-4 mr-1" /> Back to trim
+                <ChevronLeft className="h-4 w-4 mr-1" /> Back to editor
               </Button>
               <Button onClick={handleUpload} disabled={!title.trim() || uploadStore.status === 'uploading'}
                 className="gap-2 h-11 px-6">

@@ -16,6 +16,10 @@ export interface UploadMeta {
   stationId?: string | null
   clipStart?: number | null
   clipEnd?: number | null
+  overlays?: string | null
+  musicTrack?: string | null
+  filters?: string | null   // JSON stringified FilterSettings
+  thumbnail?: string | null // data URL
 }
 
 interface UploadStore {

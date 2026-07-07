@@ -54,8 +54,7 @@ export default async function UploadPage({ searchParams }: PageProps) {
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">Upload Video</h1>
           <p className="text-zinc-400 mt-1.5">
-            Upload from file or use the built-in TV Studio editor.
-            {' '}Videos are processed by Mux and typically ready within a few minutes.
+            Upload, trim, and publish directly to your channel or the main feed.
           </p>
         </div>
 
