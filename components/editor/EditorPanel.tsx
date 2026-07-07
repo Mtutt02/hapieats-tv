@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Scissors, Type, Music, Mic, Sticker, Monitor, Lock, Crown, Sparkles, Check, Palette, Image } from 'lucide-react'
+import { Scissors, Type, Music, Mic, Sticker, Monitor, Lock, Crown, Sparkles, Check, Palette, Image, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import TrimPanel from './TrimPanel'
@@ -49,25 +49,37 @@ function buildTimelineTracks(
   voiceoverBlob: Blob | null,
   clipStart: number,
   clipEnd: number,
+  clips: VideoClip[],
 ): TimelineTrack[] {
   const tracks: TimelineTrack[] = []
 
-  // Video track
-  const videoClips: TimelineClip[] = [{
-    id: 'main-video',
-    type: 'video',
-    label: 'Main Video',
-    startTime: clipStart,
-    endTime: clipEnd,
-  }]
-  tracks.push({
-    id: 'track-video',
-    label: 'Video',
-    type: 'video',
-    icon: '🎬',
-    clips: videoClips,
-    color: '#3b82f6',
-  })
+  // Video track - all clips
+  const videoClips: TimelineClip[] = clips.length > 0
+    ? clips.map(c => ({
+        id: c.id,
+        type: 'video' as const,
+        label: c.file?.name || 'Clip',
+        startTime: c.startTime || 0,
+        endTime: c.endTime || clipEnd,
+        data: c,
+      }))
+    : (clipEnd > 0 ? [{
+        id: 'main-video',
+        type: 'video' as const,
+        label: 'Main Video',
+        startTime: clipStart,
+        endTime: clipEnd,
+      }] : [])
+  if (videoClips.length > 0) {
+    tracks.push({
+      id: 'track-video',
+      label: 'Video',
+      type: 'video',
+      icon: '🎬',
+      clips: videoClips,
+      color: '#3b82f6',
+    })
+  }
 
   // Text overlays track
   const textClips: TimelineClip[] = overlays
@@ -157,6 +169,7 @@ export default function EditorPanel({ file, onComplete, onCancel }: EditorPanelP
   const [clipStart, setClipStart] = useState(0)
   const [clipEnd, setClipEnd] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [clips, setClips] = useState<VideoClip[]>([])
   const [overlays, setOverlays] = useState<Overlay[]>([])
   const [selectedTrack, setSelectedTrack] = useState<string | null>(null)
   const [voiceoverBlob, setVoiceoverBlob] = useState<Blob | null>(null)
@@ -173,6 +186,8 @@ export default function EditorPanel({ file, onComplete, onCancel }: EditorPanelP
   useEffect(() => {
     const url = URL.createObjectURL(file)
     setVideoUrl(url)
+    // Initialize first clip
+    setClips([{ id: 'clip-1', file, url, startTime: 0, endTime: 0 }])
     return () => URL.revokeObjectURL(url)
   }, [file])
 
@@ -236,7 +251,7 @@ export default function EditorPanel({ file, onComplete, onCancel }: EditorPanelP
   }, [overlays])
 
   // Build timeline tracks from current state
-  const timelineTracks = buildTimelineTracks(overlays, selectedTrack, voiceoverBlob, clipStart, clipEnd)
+  const timelineTracks = buildTimelineTracks(overlays, selectedTrack, voiceoverBlob, clipStart, clipEnd, clips)
 
   const handleDone = () => {
     onComplete({
@@ -443,10 +458,23 @@ export default function EditorPanel({ file, onComplete, onCancel }: EditorPanelP
 
       {/* Action buttons */}
       <div className="flex gap-3 sticky bottom-0 bg-zinc-950 py-3 border-t border-zinc-800 -mx-4 -mb-4 px-4">
-        <Button variant="outline" className="flex-1" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button className="flex-1 gap-2" onClick={handleDone}>
+        <div className="flex-1 flex gap-2">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <input type="file" accept="video/*" id="add-clip-input" className="hidden" onChange={e => {
+            const f = e.target.files?.[0]
+            if (!f) return
+            const id = `clip-${clips.length + 1}-${Date.now()}`
+            const url = URL.createObjectURL(f)
+            setClips(prev => [...prev, { id, file: f, url, startTime: 0, endTime: 0 }])
+            e.target.value = ''
+          }} />
+          <Button variant="outline" className="gap-1.5" onClick={() => document.getElementById('add-clip-input')?.click()}>
+            <Plus className="h-4 w-4" /> Add Clip
+          </Button>
+        </div>
+        <Button className="gap-2" onClick={handleDone}>
           <Check className="h-4 w-4" />
           Done Editing
         </Button>
