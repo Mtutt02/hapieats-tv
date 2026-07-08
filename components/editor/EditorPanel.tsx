@@ -108,28 +108,23 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
   const tracks = buildTracks(ov, sel, vb, cs, ce, clips)
   const hasEdits = ov.length > 0 || sel || vb || fl.preset
 
-  // Full-screen preview mode
-  if (preview) {
-    return (
-      <div className="fixed inset-0 z-50 bg-black flex flex-col">
-        <div className="flex-1 relative flex items-center justify-center">
-          <video ref={vr} src={vu || ''} className="max-w-full max-h-full object-contain" autoPlay loop playsInline />
-        </div>
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
-          <button onClick={() => setPreview(false)}
-            className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-md text-white text-sm font-medium border border-white/20 hover:bg-white/20 transition-all">
-            Back to Editor
-          </button>
-          <button onClick={done}
-            className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg">
-            <Check className="h-4 w-4 inline mr-1.5" />Done
-          </button>
-        </div>
+  return preview ? (
+    <div className="fixed inset-0 z-50 bg-black flex flex-col">
+      <div className="flex-1 relative flex items-center justify-center">
+        <video ref={vr} src={vu || ''} className="max-w-full max-h-full object-contain" autoPlay loop playsInline />
       </div>
-    )
-  }
-
-  return (
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
+        <button onClick={() => setPreview(false)}
+          className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-md text-white text-sm font-medium border border-white/20 hover:bg-white/20 transition-all">
+          Back to Editor
+        </button>
+        <button onClick={done}
+          className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg">
+          <Check className="h-4 w-4 inline mr-1.5" />Done
+        </button>
+      </div>
+    </div>
+  ) : (
     <div className="h-full flex flex-col bg-[#0a0a0f]">
       {/* Tutorial */}
       {showTutorial && (
@@ -261,5 +256,6 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
           </button>
         </div>
       </div>
+    </div>
   )
 }
