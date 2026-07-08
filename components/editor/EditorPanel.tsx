@@ -269,5 +269,6 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
           </div>
         </div>
       </div>
+    </div>
   )
 }
