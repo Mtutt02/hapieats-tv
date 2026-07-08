@@ -275,7 +275,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
               <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition-transform', showEditor && 'rotate-180')} />
             </button>
             {showEditor && (
-              <div className="bg-zinc-950" style={{ height: '70vh' }}>
+              <div className="bg-zinc-950" style={{ height: '80vh' }}>
                 <EditorPanel
                   files={files}
                   onComplete={(output) => { setEditorOutput(output); setShowEditor(false) }}

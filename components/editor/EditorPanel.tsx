@@ -165,68 +165,57 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
 
       {/* === CAPCUT-STYLE LAYOUT === */}
       <div className="h-full flex flex-col bg-[#0a0a0f] overflow-hidden">
-        {/* ─── TOP: Preview panel ─── */}
-        <div className="flex-shrink-0 flex items-center justify-center bg-black/40 border-b border-white/5" style={{ height: '40%', minHeight: 200 }}>
-          <div className="relative w-full h-full flex items-center justify-center">
-            {vu ? (
-              <>
-                <video ref={vr} src={vu}
-                  className="max-w-full max-h-full object-contain"
-                  onLoadedMetadata={onMeta}
-                  onTimeUpdate={() => { try { if (vr.current) setCt(vr.current.currentTime) } catch {} }}
-                  onPlay={() => setPlay(true)} onPause={() => setPlay(false)} onEnded={() => setPlay(false)}
-                  playsInline />
-                {!play && (
-                  <div className="absolute inset-0 flex items-center justify-center" onClick={toggle}>
-                    <div className="h-14 w-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-2xl hover:bg-white/30 transition-all cursor-pointer">
-                      <Play className="h-7 w-7 text-white ml-0.5" />
-                    </div>
+        {/* ─── TOP: Preview panel (aspect-ratio limited) ─── */}
+        <div className="aspect-video max-h-[40vh] w-full mx-auto bg-black/80 border-b border-white/5 shrink-0 relative flex items-center justify-center">
+          {vu ? (
+            <>
+              <video ref={vr} src={vu}
+                className="w-full h-full object-contain"
+                onLoadedMetadata={onMeta}
+                onTimeUpdate={() => { try { if (vr.current) setCt(vr.current.currentTime) } catch {} }}
+                onPlay={() => setPlay(true)} onPause={() => setPlay(false)} onEnded={() => setPlay(false)}
+                playsInline />
+              {!play && (
+                <div className="absolute inset-0 flex items-center justify-center" onClick={toggle}>
+                  <div className="h-16 w-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-2xl hover:bg-white/30 transition-all cursor-pointer">
+                    <Play className="h-7 w-7 text-white ml-0.5" />
                   </div>
-                )}
-                {/* Time badge */}
-                <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-sm rounded-lg px-2.5 py-1">
-                  <span className="text-xs text-white/80 font-mono">{Math.floor(ct / 60)}:{(Math.floor(ct) % 60).toString().padStart(2, '0')} / {Math.floor((ce || dur) / 60)}:{(Math.floor(ce || dur) % 60).toString().padStart(2, '0')}</span>
                 </div>
-                {/* Edit badges */}
-                {hasEdits && (
-                  <div className="absolute top-2 left-2 flex gap-1.5">
-                    {ov.length > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/80 text-white">{ov.length} TX</span>}
-                    {sel && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/80 text-white">MU</span>}
-                    {vb && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/80 text-white">VO</span>}
-                    {fl.preset && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/80 text-white capitalize">{fl.preset}</span>}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-zinc-600 text-sm">Loading...</div>
-            )}
-            {/* Done button top right */}
-            <button onClick={done}
-              className="absolute top-3 right-3 px-4 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-xs font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all z-10">
-              <Check className="h-3.5 w-3.5 inline mr-1" />Done
-            </button>
-          </div>
+              )}
+              {/* Time badge */}
+              <div className="absolute bottom-2 right-2 bg-black/70 rounded-lg px-2 py-1 text-xs text-white/80 font-mono">
+                {Math.floor(ct / 60)}:{(Math.floor(ct) % 60).toString().padStart(2, '0')} / {Math.floor((ce || dur) / 60)}:{(Math.floor(ce || dur) % 60).toString().padStart(2, '0')}
+              </div>
+              {/* Done button top right */}
+              <button onClick={done}
+                className="absolute top-2 right-2 px-4 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all z-10">
+                <Check className="h-4 w-4 inline mr-1" />Done
+              </button>
+            </>
+          ) : (
+            <div className="text-zinc-600 text-sm">Loading...</div>
+          )}
         </div>
 
         {/* ─── MIDDLE: Tab bar + tool content ─── */}
-        <div className="flex-shrink-0">
-          {/* Tab bar */}
-          <div className="flex gap-0.5 px-2 py-1.5 bg-zinc-900/80 border-b border-white/5">
+        <div className="shrink-0 max-h-[40%] flex flex-col">
+          {/* Tab bar - scrollable on mobile */}
+          <div className="flex gap-1 px-2 py-1.5 bg-zinc-900/80 border-b border-white/5 overflow-x-auto scrollbar-none shrink-0">
             {TABS.map(id => {
               const I = TI[id]
               return (
                 <button key={id} onClick={() => setTab(id)}
-                  className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all', tab === id ? 'bg-primary/15 text-primary' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5')}>
-                  <I className="h-3.5 w-3.5" />
-                  <span>{TL[id]}</span>
+                  className={cn('flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all', tab === id ? 'bg-primary/15 text-primary' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5')}>
+                  <I className="h-4 w-4" />
+                  <span className="hidden sm:inline">{TL[id]}</span>
                 </button>
               )
             })}
           </div>
 
-          {/* Tool content panel */}
-          <div className="overflow-y-auto" style={{ height: 'clamp(80px, 15vh, 140px)' }}>
-            <div className="p-3">
+          {/* Tool content - scrollable, reasonable height */}
+          <div className="overflow-y-auto flex-1 min-h-[200px]">
+            <div className="p-4">
               {tab === 'trim' && <TrimPanel file={files[0]} clipStart={cs} clipEnd={ce} onTrimChange={(s, e) => { setCs(s); setCe(e) }} />}
               {tab === 'text' && <TextOverlayPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
               {tab === 'music' && <MusicPanel selectedTrack={sel} onTrackSelect={setSel} />}
@@ -249,21 +238,21 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
           </div>
 
           {/* Bottom action bar */}
-          <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/80 border-t border-white/5 shrink-0">
+          <div className="flex items-center justify-between px-3 py-2 bg-zinc-900/80 border-t border-white/5 shrink-0">
             <div className="flex items-center gap-2">
-              <button onClick={onCancel} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1">Cancel</button>
+              <button onClick={onCancel} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1">Cancel</button>
               <button onClick={add}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-zinc-400 text-xs hover:bg-white/10 hover:text-zinc-200 transition-all">
-                <Plus className="h-3 w-3" /> Add Clip
+                className="flex items-center gap-1 px-3 py-2 rounded-lg bg-white/5 text-zinc-400 text-sm hover:bg-white/10 hover:text-zinc-200 transition-all">
+                <Plus className="h-4 w-4" /> Add Clip
               </button>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setPreview(true)}
-                className={cn('flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all', hasEdits ? 'bg-amber-500/15 text-amber-400' : 'text-zinc-500 hover:text-zinc-300')}>
-                <Eye className="h-3.5 w-3.5" /> Preview
+                className={cn('flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-all', hasEdits ? 'bg-amber-500/15 text-amber-400' : 'text-zinc-500 hover:text-zinc-300')}>
+                <Eye className="h-4 w-4" /> Preview
               </button>
-              <button onClick={done} className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-xs font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all">
-                <Check className="h-3.5 w-3.5 inline mr-1" />Done
+              <button onClick={done} className="px-5 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all">
+                <Check className="h-4 w-4 inline mr-1" />Done
               </button>
             </div>
           </div>
