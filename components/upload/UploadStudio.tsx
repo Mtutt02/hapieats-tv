@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
 import {
-  UploadCloud, AlertCircle, Globe, Lock, Sparkles,
-  ArrowRight, CheckCircle2, Play, Pause, Scissors, X, Wand2, Plus, Film,
+  UploadCloud, AlertCircle, Globe, Lock,
+  ArrowRight, CheckCircle2, Scissors, X, Wand2, Plus, Film, ChevronDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,7 +18,6 @@ import { composeFinalVideo } from '@/lib/video-compositor'
 
 interface Channel { id: string; name: string; slug: string }
 interface Station { id: string; name: string }
-interface ClipInfo { startTime: number; endTime: number; duration: number }
 
 interface UploadStudioProps {
   channels: Channel[]
@@ -39,8 +38,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
   const uploadStore = useUploadStore()
 
   const [files, setFiles] = useState<File[]>([])
-  const [step, setStep] = useState<'select' | 'edit' | 'uploading' | 'done'>('select')
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [step, setStep] = useState<'select' | 'meta' | 'uploading' | 'done'>('select')
   const [editorOutput, setEditorOutput] = useState<EditorOutput | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
   const [uploadedVideoId, setUploadedVideoId] = useState<string | null>(null)
@@ -50,9 +48,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<'public' | 'private'>('public')
   const [titleError, setTitleError] = useState<string | null>(null)
-  const [showTutorial, setShowTutorial] = useState(true)
-
-  const fileSizeLabel = files[0] ? formatBytes(files[0].size) : ''
+  const [showEditor, setShowEditor] = useState(false)
 
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
@@ -63,8 +59,9 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
       return
     }
     setFiles(accepted)
-    setVideoUrl(URL.createObjectURL(accepted[0]))
-    setStep('edit')
+    setEditorOutput(null)
+    setShowEditor(false)
+    setStep('meta')
   }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -75,7 +72,6 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
     if (files.length === 0) return
     if (!title.trim()) { setTitleError('Add a title first'); return }
 
-    // Compose the final video with all edits applied
     const hasEdits = editorOutput && (
       (editorOutput.overlays && editorOutput.overlays.length > 0) ||
       editorOutput.filters?.preset ||
@@ -87,7 +83,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
       editorOutput.musicTrack ||
       editorOutput.voiceoverBlob ||
       editorOutput.clipStart !== 0 ||
-      editorOutput.clipEnd !== files[0]?.size // approximate check
+      editorOutput.clipEnd !== files[0]?.size
     )
 
     let uploadFile = files[0]
@@ -104,7 +100,6 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
           { type: composedBlob.type })
       } catch (err) {
         console.warn('Video composition failed, uploading original:', err)
-        // Fall back to original file + store edit metadata
       }
       setIsComposing(false)
     }
@@ -128,6 +123,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
     if (uploadStore.status !== 'error') { setStep('uploading'); setUploadedVideoId(uploadStore.videoId) }
   }
 
+  // ─── Upload/Processing/Done screens ──────────────────────────────────
   if (step === 'uploading' || step === 'done' || isComposing) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
@@ -175,7 +171,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             <h2 className="text-xl font-bold mb-2">Published!</h2>
             <p className="text-zinc-400 text-sm mb-6">{title} is live.</p>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setVideoUrl(null) }}>Upload another</Button>
+              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setEditorOutput(null) }}>Upload another</Button>
               {uploadedVideoId && <Button onClick={() => router.push(`/watch/${uploadedVideoId}`)}>View video <ArrowRight className="h-4 w-4 ml-1" /></Button>}
             </div>
           </>
@@ -186,7 +182,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* Select step */}
+      {/* ─── Select step ───────────────────────────────────────────────── */}
       {step === 'select' && (
         <div {...getRootProps()} className={cn('border-2 border-dashed rounded-2xl cursor-pointer transition-all text-center py-24 px-6', isDragActive ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-zinc-700 hover:border-primary/50 hover:bg-zinc-900/30')}>
           <input {...getInputProps()} />
@@ -201,19 +197,44 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
         </div>
       )}
 
-      {/* Edit step — fixed viewport layout */}
-      {step === 'edit' && videoUrl && (
-        <div className="flex flex-col gap-0" style={{ height: 'calc(100vh - 180px)' }}>
-          {/* Top bar: Details + Publish */}
-          <div className="flex items-center gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-t-xl shrink-0">
+      {/* ─── Meta + Details + Collapsible Editor ─────────────────────── */}
+      {step === 'meta' && (
+        <div className="space-y-6">
+          {/* File summary bar */}
+          <div className="flex items-center gap-3 p-3 rounded-xl border bg-zinc-900/50">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <Film className="h-5 w-5 text-primary" />
+            </div>
             <div className="flex-1 min-w-0">
-              <input value={title} onChange={e => { setTitle(e.target.value); setTitleError(null) }}
-                placeholder="Add a title..." className="w-full bg-transparent border-0 text-white text-lg font-bold placeholder-zinc-600 focus:outline-none" />
+              <p className="text-sm font-medium truncate text-white">{files[0]?.name}</p>
+              <p className="text-xs text-zinc-500">{files[0] ? formatBytes(files[0].size) : ''}</p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-zinc-500 hover:text-red-400 shrink-0"
+              onClick={() => { setFiles([]); setEditorOutput(null); setStep('select') }}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Title + Visibility + Publish row */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <input
+                value={title}
+                onChange={e => { setTitle(e.target.value); setTitleError(null) }}
+                placeholder="Add a title..."
+                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-white text-base placeholder-zinc-600 focus:outline-none focus:border-primary/50"
+              />
+              {titleError && <p className="text-red-400 text-xs mt-1">{titleError}</p>}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {[{ value: 'public' as const, icon: Globe }, { value: 'private' as const, icon: Lock }].map(opt => (
                 <button key={opt.value} onClick={() => setVisibility(opt.value)}
-                  className={cn('p-2 rounded-lg border transition-all', visibility === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-zinc-800 text-zinc-600 hover:text-zinc-400')}>
+                  className={cn('p-2.5 rounded-lg border transition-all', visibility === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-zinc-800 text-zinc-600 hover:text-zinc-400')}>
                   <opt.icon className="h-4 w-4" />
                 </button>
               ))}
@@ -223,15 +244,47 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             </div>
           </div>
 
-          {/* Editor — fills remaining height, no scrolling */}
-          <div className="flex-1 min-h-0">
-            <EditorPanel
-              files={files}
-              onComplete={(output) => { setEditorOutput(output) }}
-              onCancel={() => { setFiles([]); setStep('select'); setVideoUrl(null) }}
-              showTutorial={showTutorial}
-              onDismissTutorial={() => setShowTutorial(false)}
-            />
+          {/* Description */}
+          <Textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Tell viewers what this video is about…"
+            rows={3}
+            className="bg-zinc-900 border-zinc-700 text-white placeholder-zinc-600"
+          />
+
+          {/* Collapsible Edit video section */}
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowEditor(!showEditor)}
+              className={cn(
+                'flex items-center justify-between w-full px-4 py-3 text-sm font-medium transition-colors',
+                showEditor ? 'bg-primary/5 border-b border-zinc-800' : 'hover:bg-zinc-900/60'
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <Scissors className={cn('h-4 w-4 transition-colors', showEditor && 'text-primary')} />
+                <span className={showEditor ? 'text-primary' : 'text-zinc-300'}>Edit video</span>
+                {editorOutput && !showEditor && (
+                  <span className="text-xs text-zinc-500 ml-1">
+                    (trim{editorOutput.overlays?.length ? ', overlays' : ''}{editorOutput.musicTrack ? ', music' : ''}{editorOutput.filters?.preset ? ', filters' : ''})
+                  </span>
+                )}
+              </div>
+              <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition-transform', showEditor && 'rotate-180')} />
+            </button>
+            {showEditor && (
+              <div className="bg-zinc-950" style={{ height: '70vh' }}>
+                <EditorPanel
+                  files={files}
+                  onComplete={(output) => { setEditorOutput(output); setShowEditor(false) }}
+                  onCancel={() => setShowEditor(false)}
+                  showTutorial={false}
+                  onDismissTutorial={() => {}}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
