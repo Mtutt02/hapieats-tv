@@ -132,7 +132,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
             <MuxPlayer
               playbackId={video.muxPlaybackId}
               muted autoPlay loop streamType="on-demand"
-              style={{ '--controls': 'none', '--media-object-fit': 'cover', width: '100%', height: '100%' } as React.CSSProperties}
+              style={{ '--controls': 'none', '--media-object-fit': 'contain', width: '100%', height: '100%' } as React.CSSProperties}
             />
           </div>
         )}
@@ -203,7 +203,7 @@ function RealVideoCard({ video, isTouch }: { video: Video; isTouch: boolean }) {
             <MuxPlayer
               playbackId={video.mux_playback_id}
               muted autoPlay loop streamType="on-demand"
-              style={{ '--controls': 'none', '--media-object-fit': 'cover', width: '100%', height: '100%' } as React.CSSProperties}
+              style={{ '--controls': 'none', '--media-object-fit': 'contain', width: '100%', height: '100%' } as React.CSSProperties}
             />
           </div>
         )}

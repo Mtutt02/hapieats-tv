@@ -116,7 +116,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
                 streamType="on-demand"
                 style={{
                   '--controls': 'none',
-                  '--media-object-fit': 'cover',
+                  '--media-object-fit': 'contain',
                   width: '100%',
                   height: '100%',
                 } as React.CSSProperties}
@@ -188,7 +188,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
               streamType="on-demand"
               style={{
                 '--controls': 'none',
-                '--media-object-fit': 'cover',
+                '--media-object-fit': 'contain',
                 width: '100%',
                 height: '100%',
               } as React.CSSProperties}

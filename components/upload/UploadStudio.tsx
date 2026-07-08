@@ -96,7 +96,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
   const uploadStore = useUploadStore()
 
   const [step, setStep] = useState<Step>('file')
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [clip, setClip] = useState<ClipInfo | null>(null)
   const [editorOutput, setEditorOutput] = useState<EditorOutput | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
@@ -114,13 +114,15 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
 
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
-    const f = accepted[0]
-    if (!f) return
-    if (f.size > MAX_UPLOAD_BYTES) {
-      setDropError(`File is ${formatBytes(f.size)} — 20 GB max.`)
-      return
+    if (accepted.length === 0) return
+    // Check each file size
+    for (const f of accepted) {
+      if (f.size > MAX_UPLOAD_BYTES) {
+        setDropError(`File ${f.name} is ${formatBytes(f.size)} — 20 GB max.`)
+        return
+      }
     }
-    setFile(f)
+    setFiles(accepted)
     setClip(null)
     setEditorOutput(null)
     setStep('trim')
@@ -129,12 +131,12 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'video/*': [] },
-    maxFiles: 1,
+    maxFiles: 10,
     disabled: step !== 'file',
   })
 
   const handleUpload = async () => {
-    if (!file) return
+    if (files.length === 0) return
     if (!title.trim()) { setTitleError('Add a title first'); return }
 
     const tagsArray = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : []
@@ -143,7 +145,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
       ? JSON.stringify(editorOutput.overlays)
       : null
 
-    await uploadStore.startUpload(file, {
+    await uploadStore.startUpload(files[0], {
       title: title.trim(),
       description: description.trim() || undefined,
       channelId: postType === 'channel' ? (channelId || null) : null,
@@ -165,8 +167,8 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
     }
   }
 
-  const fileSizeLabel = file ? formatBytes(file.size) : ''
-  const fileTimeLabel = file ? uploadEstimate(file.size) : ''
+  const fileSizeLabel = files[0] ? formatBytes(files[0].size) : ''
+  const fileTimeLabel = files[0] ? uploadEstimate(files[0].size) : ''
   const videoDuration = clip
     ? `Clipped: ${formatDuration(clip.startTime)} — ${formatDuration(clip.endTime)} (${Math.floor(clip.duration / 60)}:${String(Math.floor(clip.duration % 60)).padStart(2, '0')})`
     : 'Full video'
@@ -218,7 +220,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
             <h2 className="text-2xl font-bold mb-2">Published!</h2>
             <p className="text-zinc-400 text-sm mb-8">{title} is live.</p>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setFile(null); setStep('file'); setTitle(''); setDescription(''); setTags('') }}>
+              <Button variant="outline" onClick={() => { setFiles([]); setStep('file'); setTitle(''); setDescription(''); setTags('') }}>
                 Upload another
               </Button>
               {uploadedVideoId && (
@@ -281,7 +283,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
         </div>
       )}
 
-      {step === 'trim' && file && (
+      {step === 'trim' && files.length > 0 && (
         <div className="space-y-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -292,14 +294,14 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
               </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => { setFile(null); setStep('file') }} className="text-zinc-500">
+              <Button variant="ghost" size="sm" onClick={() => { setFiles([]); setStep('file') }} className="text-zinc-500">
                 <X className="h-4 w-4 mr-1" /> Discard
               </Button>
             </div>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden">
             <EditorPanel
-              file={file}
+              files={files}
               onComplete={(output) => {
                 setEditorOutput(output)
                 setClip({
@@ -309,13 +311,13 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
                 })
                 setStep('details')
               }}
-              onCancel={() => { setFile(null); setStep('file') }}
+              onCancel={() => { setFiles([]); setStep('file') }}
             />
           </div>
         </div>
       )}
 
-      {step === 'details' && file && (
+      {step === 'details' && files.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
           <div className="space-y-4">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4">
@@ -323,7 +325,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
                 <Film className="h-6 w-6 text-primary" />
               </div>
               <div className="space-y-1">
-                <p className="font-semibold text-sm truncate">{file.name}</p>
+                <p className="font-semibold text-sm truncate">{files[0].name}</p>
                 <p className="text-xs text-zinc-500">{videoDuration}</p>
                 <div className="flex items-center gap-2 flex-wrap pt-1">
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono">{fileSizeLabel}</span>
@@ -349,7 +351,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
                   )}
                 </div>
               )}
-              {file.size > 8 * 1024 ** 3 && (
+              {files[0].size > 8 * 1024 ** 3 && (
                 <p className="text-[11px] text-amber-400/70">Large file — upload continues in the background.</p>
               )}
               <div className="flex gap-2 pt-1">
@@ -357,7 +359,7 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
                   <Wand2 className="h-3 w-3 mr-1" /> Edit video
                 </Button>
                 <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-red-400"
-                  onClick={() => { setFile(null); setStep('file') }}>
+                  onClick={() => { setFiles([]); setStep('file') }}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>

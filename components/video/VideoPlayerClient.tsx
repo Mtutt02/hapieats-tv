@@ -50,6 +50,7 @@ export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPla
           streamType="on-demand"
           className="w-full h-full"
           thumbnailTime={0}
+          style={{ '--media-object-fit': 'contain' } as any}
         />
       </div>
     )
