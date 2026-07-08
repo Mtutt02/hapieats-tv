@@ -20,6 +20,7 @@ export interface UploadMeta {
   musicTrack?: string | null
   filters?: string | null   // JSON stringified FilterSettings
   thumbnail?: string | null // data URL
+  voiceoverBlob?: Blob | null
 }
 
 interface UploadStore {
@@ -54,10 +55,20 @@ export const useUploadStore = create<UploadStore>((set) => ({
     set({ status: 'uploading', progress: 0, fileName: file.name, fileSize: file.size, error: null, videoId: null, minimized: false })
 
     try {
+      // Convert voiceoverBlob to base64 data URL if present (for JSON transport)
+      const body: Record<string, unknown> = { ...meta }
+      delete body.voiceoverBlob
+
+      if (meta.voiceoverBlob) {
+        const buf = await meta.voiceoverBlob.arrayBuffer()
+        const b64 = btoa(Array.from(new Uint8Array(buf)).map(b => String.fromCharCode(b)).join(''))
+        body.voiceoverUrl = `data:${meta.voiceoverBlob.type};base64,${b64}`
+      }
+
       const res = await fetch('/api/mux/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(meta),
+        body: JSON.stringify(body),
       })
       const json = await res.json()
 

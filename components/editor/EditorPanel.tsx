@@ -1,5 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { Scissors, Type, Music, Mic, Sticker, Monitor, Lock, Crown, Sparkles, Check, Palette, Image, Plus } from 'lucide-react'
+'use client'
+
+import { useState, useRef, useEffect } from 'react'
+import {
+  Scissors, Type, Music, Mic, Sticker, Palette,
+  Plus, Check, X, Play, Pause, Eye, Film, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import TrimPanel from './TrimPanel'
@@ -7,406 +12,252 @@ import TextOverlayPanel from './TextOverlayPanel'
 import MusicPanel from './MusicPanel'
 import VoiceOverPanel from './VoiceOverPanel'
 import StickerPanel from './StickerPanel'
-import BackgroundRemoval from './BackgroundRemoval'
-import PremiumGate from './PremiumGate'
-import VideoPreview from './VideoPreview'
-import Timeline from './Timeline'
 import FilterPanel from './FilterPanel'
-import ThumbnailPicker from './ThumbnailPicker'
+import Timeline from './Timeline'
 import type { EditorOutput, Overlay, FilterSettings, TimelineTrack, TimelineClip, VideoClip } from './types'
 import { DEFAULT_FILTERS } from './types'
 
-interface EditorPanelProps {
+interface Props {
   files: File[]
   onComplete: (output: EditorOutput) => void
   onCancel: () => void
+  showTutorial?: boolean
+  onDismissTutorial?: () => void
 }
 
-type TabId = 'trim' | 'text' | 'music' | 'voice' | 'stickers' | 'filters' | 'background'
+type TabId = 'trim' | 'text' | 'music' | 'voice' | 'stickers' | 'filters'
+const TABS: TabId[] = ['trim', 'text', 'music', 'voice', 'stickers', 'filters']
+const TI: Record<TabId, React.ElementType> = { trim: Scissors, text: Type, music: Music, voice: Mic, stickers: Sticker, filters: Palette }
+const TL: Record<TabId, string> = { trim: 'Trim', text: 'Text', music: 'Music', voice: 'Voice', stickers: 'Stickers', filters: 'Filters' }
 
-interface Tab {
-  id: TabId
-  label: string
-  icon: React.ElementType
-  premium?: boolean
+function buildTracks(overlays: Overlay[], sel: string | null, vb: Blob | null, cs: number, ce: number, clips: VideoClip[]): TimelineTrack[] {
+  const t: TimelineTrack[] = []
+  const vc: TimelineClip[] = clips.length > 0
+    ? clips.map(c => ({ id: c.id, type: 'video' as const, label: c.file?.name || 'Clip', startTime: c.startTime || 0, endTime: c.endTime || ce, data: c }))
+    : (ce > 0 ? [{ id: 'main-video', type: 'video' as const, label: 'Main', startTime: cs, endTime: ce }] : [])
+  if (vc.length > 0) t.push({ id: 'track-v', label: 'Video', type: 'video', icon: '🎬', clips: vc, color: '#3b82f6' })
+  const oc = overlays.map(o => ({ id: o.id, type: 'overlay' as const, label: `${o.type === 'text' ? '📝' : '🎨'} ${o.content.substring(0, 15)}`, startTime: o.startTime, endTime: o.endTime }))
+  if (oc.length > 0) t.push({ id: 'track-o', label: 'Overlays', type: 'overlay', icon: '🎨', clips: oc, color: '#a855f7' })
+  if (sel) t.push({ id: 'track-m', label: 'Music', type: 'music', icon: '🎵', clips: [{ id: 'mc', type: 'music' as const, label: 'Background Music', startTime: cs, endTime: ce }], color: '#22c55e' })
+  if (vb) t.push({ id: 'track-vc', label: 'Voice', type: 'voice', icon: '🎤', clips: [{ id: 'vc', type: 'voice' as const, label: 'Voiceover', startTime: cs, endTime: ce }], color: '#f59e0b' })
+  return t
 }
 
-const TABS: Tab[] = [
-  { id: 'trim', label: 'Trim', icon: Scissors },
-  { id: 'text', label: 'Text', icon: Type },
-  { id: 'music', label: 'Music', icon: Music },
-  { id: 'voice', label: 'Voice', icon: Mic },
-  { id: 'stickers', label: 'Stickers', icon: Sticker },
-  { id: 'filters', label: 'Filters', icon: Palette },
-  { id: 'background', label: 'Background', icon: Monitor, premium: true },
-]
-
-function buildTimelineTracks(
-  overlays: Overlay[],
-  selectedTrack: string | null,
-  voiceoverBlob: Blob | null,
-  clipStart: number,
-  clipEnd: number,
-  clips: VideoClip[],
-): TimelineTrack[] {
-  const tracks: TimelineTrack[] = []
-
-  // Video track - all clips
-  const videoClips: TimelineClip[] = clips.length > 0
-    ? clips.map(c => ({
-        id: c.id,
-        type: 'video' as const,
-        label: c.file?.name || 'Clip',
-        startTime: c.startTime || 0,
-        endTime: c.endTime || clipEnd,
-        data: c,
-      }))
-    : (clipEnd > 0 ? [{
-        id: 'main-video',
-        type: 'video' as const,
-        label: 'Main Video',
-        startTime: clipStart,
-        endTime: clipEnd,
-      }] : [])
-  if (videoClips.length > 0) {
-    tracks.push({
-      id: 'track-video',
-      label: 'Video',
-      type: 'video',
-      icon: '🎬',
-      clips: videoClips,
-      color: '#3b82f6',
-    })
-  }
-
-  // Text overlays track
-  const textClips: TimelineClip[] = overlays
-    .filter(o => o.type === 'text')
-    .map(o => ({
-      id: o.id,
-      type: 'text' as const,
-      label: o.content.substring(0, 20),
-      startTime: o.startTime,
-      endTime: o.endTime,
-      data: o,
-    }))
-  if (textClips.length > 0) {
-    tracks.push({
-      id: 'track-text',
-      label: 'Text',
-      type: 'text',
-      icon: '📝',
-      clips: textClips,
-      color: '#c9a84c',
-    })
-  }
-
-  // Sticker overlays track
-  const stickerClips: TimelineClip[] = overlays
-    .filter(o => o.type === 'emoji')
-    .map(o => ({
-      id: o.id,
-      type: 'sticker' as const,
-      label: o.content,
-      startTime: o.startTime,
-      endTime: o.endTime,
-      data: o,
-    }))
-  if (stickerClips.length > 0) {
-    tracks.push({
-      id: 'track-stickers',
-      label: 'Stickers',
-      type: 'sticker',
-      icon: '🌟',
-      clips: stickerClips,
-      color: '#a855f7',
-    })
-  }
-
-  // Music track
-  if (selectedTrack) {
-    tracks.push({
-      id: 'track-music',
-      label: 'Music',
-      type: 'music',
-      icon: '🎵',
-      clips: [{
-        id: 'music-clip',
-        type: 'music',
-        label: selectedTrack,
-        startTime: 0,
-        endTime: clipEnd,
-      }],
-      color: '#22c55e',
-    })
-  }
-
-  // Voiceover track
-  if (voiceoverBlob) {
-    tracks.push({
-      id: 'track-voice',
-      label: 'Voice Over',
-      type: 'voice',
-      icon: '🎤',
-      clips: [{
-        id: 'voice-clip',
-        type: 'voice',
-        label: 'Recording',
-        startTime: 0,
-        endTime: clipEnd,
-      }],
-      color: '#f97316',
-    })
-  }
-
-  return tracks
-}
-
-export default function EditorPanel({ files, onComplete, onCancel }: EditorPanelProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('trim')
-  const [clipStart, setClipStart] = useState(0)
-  const [clipEnd, setClipEnd] = useState(0)
-  const [duration, setDuration] = useState(0)
+export default function EditorPanel({ files, onComplete, onCancel, showTutorial, onDismissTutorial }: Props) {
+  const vr = useRef<HTMLVideoElement>(null)
+  const [vu, setVu] = useState<string | null>(null)
   const [clips, setClips] = useState<VideoClip[]>([])
-  const [overlays, setOverlays] = useState<Overlay[]>([])
-  const [selectedTrack, setSelectedTrack] = useState<string | null>(null)
-  const [voiceoverBlob, setVoiceoverBlob] = useState<Blob | null>(null)
-  const [filters, setFilters] = useState<FilterSettings>(DEFAULT_FILTERS)
-  const [thumbnail, setThumbnail] = useState<string | null>(null)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [timelineZoom, setTimelineZoom] = useState(2)
+  const [ct, setCt] = useState(0)
+  const [dur, setDur] = useState(0)
+  const [play, setPlay] = useState(false)
+  const [cs, setCs] = useState(0)
+  const [ce, setCe] = useState(0)
+  const [tab, setTab] = useState<TabId>('trim')
+  const [ov, setOv] = useState<Overlay[]>([])
+  const [fl, setFl] = useState<FilterSettings>(DEFAULT_FILTERS)
+  const [sel, setSel] = useState<string | null>(null)
+  const [vb, setVb] = useState<Blob | null>(null)
+  const [zm, setZm] = useState(1)
+  const [preview, setPreview] = useState(false)
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
-
-  // Create blob URLs for all files and initialize clips
   useEffect(() => {
-    const initialClips: VideoClip[] = files.map((f, i) => ({
-      id: `clip-${i + 1}`,
-      file: f,
-      url: URL.createObjectURL(f),
-      startTime: 0,
-      endTime: 0,
-    }))
-    setClips(initialClips)
-    setVideoUrl(initialClips[0]?.url || null)
-    return () => {
-      initialClips.forEach(c => URL.revokeObjectURL(c.url))
-    }
+    const ic = files.map((f, i) => ({ id: `c${i + 1}`, file: f, url: URL.createObjectURL(f), startTime: 0, endTime: 0 }))
+    setClips(ic); setVu(ic[0]?.url || null)
+    return () => ic.forEach(c => URL.revokeObjectURL(c.url))
   }, [files])
 
-  const handleMetadata = () => {
-    if (!videoRef.current) return
-    const d = videoRef.current.duration
-    setDuration(d)
-    setClipEnd(d)
+  const onMeta = () => { if (vr.current) { const d = vr.current.duration; if (isFinite(d)) { setDur(d); if (ce === 0) setCe(d) } } }
+
+  const toggle = () => {
+    if (!vr.current) return
+    if (play) { vr.current.pause(); setPlay(false) } else {
+      if (vr.current.currentTime >= ce || vr.current.currentTime < cs) vr.current.currentTime = cs
+      vr.current.play().then(() => setPlay(true)).catch(() => {})
+    }
   }
 
-  const handleTimeUpdate = useCallback((time: number) => {
-    setCurrentTime(time)
-    // Loop playback within clip range
-    if (videoRef.current && time >= clipEnd && isPlaying) {
-      videoRef.current.currentTime = clipStart
-      setCurrentTime(clipStart)
-    }
-  }, [clipStart, clipEnd, isPlaying])
+  const seek = (t: number) => { try { if (vr.current) vr.current.currentTime = t; setCt(t) } catch {} }
 
-  const handlePlayPause = useCallback(() => {
-    if (!videoRef.current) return
-    if (isPlaying) {
-      videoRef.current.pause()
-    } else {
-      if (videoRef.current.currentTime >= clipEnd || videoRef.current.currentTime < clipStart) {
-        videoRef.current.currentTime = clipStart
-      }
-      videoRef.current.play()
-    }
-    setIsPlaying(!isPlaying)
-  }, [isPlaying, clipStart, clipEnd])
-
-  const handleSeek = useCallback((time: number) => {
-    setCurrentTime(time)
-    if (videoRef.current) {
-      videoRef.current.currentTime = time
-    }
-  }, [])
-
-  const handleDeleteClip = useCallback((trackId: string, clipId: string) => {
-    if (clipId === 'main-video') return
-    const overlayToRemove = overlays.find(o => o.id === clipId)
-    if (overlayToRemove) {
-      setOverlays(prev => prev.filter(o => o.id !== clipId))
-      return
-    }
-    if (clipId === 'music-clip') { setSelectedTrack(null); return }
-    if (clipId === 'voice-clip') { setVoiceoverBlob(null); return }
-  }, [overlays])
-
-  const timelineTracks = buildTimelineTracks(overlays, selectedTrack, voiceoverBlob, clipStart, clipEnd, clips)
-
-  const handleDone = () => {
-    onComplete({ clipStart, clipEnd, overlays, musicTrack: selectedTrack, voiceoverBlob })
+  const del = (tid: string, cid: string) => {
+    const o = ov.find(x => x.id === cid)
+    if (o) { setOv(prev => prev.filter(x => x.id !== cid)); return }
+    if (cid === 'mc') { setSel(null); return }
+    if (cid === 'vc') { setVb(null); return }
   }
 
-  const TabContent = () => {
-    switch (activeTab) {
-      case 'trim':
-        return <TrimPanel file={files[0]} clipStart={clipStart} clipEnd={clipEnd} onTrimChange={(s, e) => { setClipStart(s); setClipEnd(e) }} />
-      case 'text':
-        return <TextOverlayPanel overlays={overlays} onOverlaysChange={setOverlays} videoDuration={duration} />
-      case 'music':
-        return <MusicPanel selectedTrack={selectedTrack} onTrackSelect={setSelectedTrack} />
-      case 'voice':
-        return <VoiceOverPanel blob={voiceoverBlob} onBlobChange={setVoiceoverBlob} />
-      case 'stickers':
-        return <StickerPanel overlays={overlays} onOverlaysChange={setOverlays} videoDuration={duration} />
-      case 'filters':
-        return <FilterPanel filters={filters} onFiltersChange={setFilters} videoUrl={videoUrl || ''} />
-      case 'background':
-        return (
-          <PremiumGate feature="Background Removal" description="Remove video backgrounds with AI-powered segmentation.">
-            <BackgroundRemoval file={files[0]} />
-          </PremiumGate>
-        )
-      default:
-        return null
+  const add = () => {
+    const inp = document.createElement('input')
+    inp.type = 'file'; inp.accept = 'video/*'
+    inp.onchange = () => {
+      const f = inp.files?.[0]
+      if (!f) return
+      const url = URL.createObjectURL(f)
+      setClips(p => [...p, { id: `c${p.length + 1}-${Date.now()}`, file: f, url, startTime: 0, endTime: 0 }])
+      setVu(url); setCs(0); setCe(0); setCt(0); setDur(0)
     }
+    inp.click()
+  }
+
+  const selClip = (id: string) => {
+    const c = clips.find(x => x.id === id)
+    if (c?.url) { setVu(c.url); setCs(0); setCe(0); setCt(0); setDur(0); setPlay(false) }
+  }
+
+  const done = () => onComplete({ clipStart: cs, clipEnd: ce, overlays: ov, musicTrack: sel, voiceoverBlob: vb, filters: fl })
+
+  const tracks = buildTracks(ov, sel, vb, cs, ce, clips)
+  const hasEdits = ov.length > 0 || sel || vb || fl.preset
+
+  // Full-screen preview mode
+  if (preview) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black flex flex-col">
+        <div className="flex-1 relative flex items-center justify-center">
+          <video ref={vr} src={vu || ''} className="max-w-full max-h-full object-contain" autoPlay loop playsInline />
+        </div>
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
+          <button onClick={() => setPreview(false)}
+            className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-md text-white text-sm font-medium border border-white/20 hover:bg-white/20 transition-all">
+            Back to Editor
+          </button>
+          <button onClick={done}
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg">
+            <Check className="h-4 w-4 inline mr-1.5" />Done
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-3 p-3 sm:p-4 max-w-7xl mx-auto">
-      {/* LEFT: Video preview + timeline (visible at all times) */}
-      <div className="flex-1 flex flex-col gap-3 min-w-0">
-        {/* Single video preview */}
-        {videoUrl && (
-          <div className="rounded-xl border border-zinc-800 bg-black overflow-hidden relative aspect-video lg:aspect-auto lg:min-h-[400px]">
-            <div className="absolute inset-0">
-              <VideoPreview
-                videoUrl={videoUrl}
-                overlays={overlays}
-                filters={filters}
-                currentTime={currentTime}
-                isPlaying={isPlaying}
-                duration={duration}
-                onTimeUpdate={handleTimeUpdate}
-                onPlayPause={handlePlayPause}
-              />
-            </div>
-            {overlays.length > 0 && (
-              <div className="absolute top-2 left-2 right-2 flex justify-center pointer-events-none z-10">
-                <span className="text-[10px] bg-black/60 text-zinc-400 px-2 py-1 rounded-full">
-                  {overlays.length} overlay{overlays.length !== 1 ? 's' : ''}
-                </span>
+    <div className="h-full flex flex-col bg-[#0a0a0f]">
+      {/* Tutorial */}
+      {showTutorial && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+          <div className="max-w-sm w-full">
+            <div className="text-center mb-8">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary to-orange-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary/20">
+                <Film className="h-8 w-8 text-white" />
               </div>
+              <h2 className="text-2xl font-bold text-white">CapCut-style Editor</h2>
+              <p className="text-zinc-400 text-sm mt-1">Edit in 4 steps</p>
+            </div>
+            <div className="space-y-3">
+              {[
+                ['Trim & Cut', 'Adjust clip start and end.'],
+                ['Effects', 'Add text, music, filters, stickers.'],
+                ['Preview', 'Tap the eye icon to watch your edit.'],
+                ['Done', 'Publish when it looks good.'],
+              ].map(([s, d], i) => (
+                <div key={i} className="flex items-center gap-3 bg-white/5 rounded-xl p-3">
+                  <div className="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-bold shrink-0">{i + 1}</div>
+                  <div><p className="text-white font-medium text-sm">{s}</p><p className="text-zinc-500 text-xs">{d}</p></div>
+                </div>
+              ))}
+            </div>
+            <button onClick={onDismissTutorial}
+              className="w-full mt-8 py-3 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/90 active:scale-[0.98] transition-all">
+              Start editing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* === ONE BIG EDITOR VIEW — no scrolling to see it all === */}
+      <div className="flex-1 flex min-h-0">
+        {/* LEFT: Canvas + Timeline */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 p-2 gap-2">
+          {/* Canvas */}
+          <div className="flex-1 rounded-2xl bg-black overflow-hidden relative flex items-center justify-center shadow-2xl shadow-black/60 min-h-0 border border-white/[0.03]">
+            {vu ? (
+              <>
+                <video ref={vr} src={vu}
+                  className="max-w-full max-h-full object-contain"
+                  onLoadedMetadata={onMeta}
+                  onTimeUpdate={() => { try { if (vr.current) setCt(vr.current.currentTime) } catch {} }}
+                  onPlay={() => setPlay(true)} onPause={() => setPlay(false)} onEnded={() => setPlay(false)}
+                  playsInline />
+                {!play && (
+                  <div className="absolute inset-0 flex items-center justify-center" onClick={toggle}>
+                    <div className="h-14 w-14 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/25 shadow-2xl hover:bg-white/25 transition-all cursor-pointer">
+                      <Play className="h-7 w-7 text-white ml-0.5" />
+                    </div>
+                  </div>
+                )}
+                {/* Time */}
+                <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm rounded-lg px-2.5 py-1">
+                  <span className="text-xs text-white/80 font-mono">{Math.floor(ct / 60)}:{(Math.floor(ct) % 60).toString().padStart(2, '0')} / {Math.floor((ce || dur) / 60)}:{(Math.floor(ce || dur) % 60).toString().padStart(2, '0')}</span>
+                </div>
+                {/* Edit badges */}
+                {hasEdits && (
+                  <div className="absolute bottom-2 left-2 flex gap-1.5">
+                    {ov.length > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/80 backdrop-blur-sm text-white">{ov.length} TX</span>}
+                    {sel && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/80 backdrop-blur-sm text-white">MU</span>}
+                    {vb && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/80 backdrop-blur-sm text-white">VO</span>}
+                    {fl.preset && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/80 backdrop-blur-sm text-white capitalize">{fl.preset}</span>}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-zinc-600 text-sm">Loading...</div>
             )}
           </div>
-        )}
 
-        {/* Timeline — always visible below video */}
-        {videoUrl && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2 sm:p-3 overflow-x-auto">
-            <Timeline
-              tracks={timelineTracks}
-              duration={clipEnd}
-              currentTime={currentTime}
-              onSeek={handleSeek}
-              onDeleteClip={handleDeleteClip}
-              zoom={timelineZoom}
-              onZoomChange={setTimelineZoom}
-            />
+          {/* Timeline */}
+          <div className="h-24 shrink-0 rounded-xl bg-zinc-900/80 border border-white/5 overflow-hidden">
+            <div className="w-full h-full overflow-x-auto overflow-y-hidden scrollbar-none">
+              <div className="min-w-[500px] h-full p-2">
+                <Timeline tracks={tracks} duration={ce || dur} currentTime={ct} onSeek={seek} onDeleteClip={del} onSelectClip={selClip} zoom={zm} onZoomChange={setZm} />
+              </div>
+            </div>
           </div>
-        )}
+        </div>
 
-        {/* Hidden video element for playback */}
-        <video
-          ref={videoRef}
-          src={videoUrl || ''}
-          className="hidden"
-          onLoadedMetadata={handleMetadata}
-          onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-          playsInline
-        />
-      </div>
+        {/* RIGHT: Tools panel */}
+        <div className="w-64 shrink-0 flex flex-col p-2 pl-0 min-h-0">
+          <div className="flex flex-col h-full rounded-xl bg-zinc-900/80 border border-white/5 overflow-hidden">
+            {/* Tabs */}
+            <div className="flex gap-0.5 p-1.5 bg-zinc-950/50 border-b border-white/5 shrink-0">
+              {TABS.map(id => {
+                const I = TI[id]
+                return (
+                  <button key={id} onClick={() => setTab(id)}
+                    className={cn('flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-lg text-[10px] font-medium transition-all', tab === id ? 'bg-primary/15 text-primary' : 'text-zinc-600 hover:text-zinc-400')}>
+                    <I className="h-4 w-4" />
+                  </button>
+                )
+              })}
+            </div>
 
-      {/* RIGHT: Tools panel — side-by-side on desktop, full-width below on mobile */}
-      <div className="w-full lg:w-[340px] xl:w-[380px] shrink-0">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950 flex flex-col max-h-[50vh] lg:max-h-[calc(100vh-12rem)]">
-          {/* Tab bar */}
-          <div className="flex gap-0.5 p-1 bg-zinc-900 border-b border-zinc-800 overflow-x-auto scrollbar-none">
-            {TABS.map(tab => {
-              const Icon = tab.icon
-              const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={cn(
-                    'flex items-center justify-center gap-1 py-2 px-2.5 rounded-lg text-xs font-medium transition-all shrink-0',
-                    isActive
-                      ? 'bg-primary/15 text-primary border border-primary/30 shadow-sm'
-                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50',
-                    tab.premium && !isActive && 'opacity-60'
-                  )}
-                  title={tab.label}
-                >
-                  {tab.premium && !isActive ? <Lock className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
-                  <span className="text-[11px] hidden sm:inline">{tab.label}</span>
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+              {tab === 'trim' && <TrimPanel file={files[0]} clipStart={cs} clipEnd={ce} onTrimChange={(s, e) => { setCs(s); setCe(e) }} />}
+              {tab === 'text' && <TextOverlayPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
+              {tab === 'music' && <MusicPanel selectedTrack={sel} onTrackSelect={setSel} />}
+              {tab === 'voice' && <VoiceOverPanel blob={vb} onBlobChange={setVb} />}
+              {tab === 'stickers' && <StickerPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
+              {tab === 'filters' && <FilterPanel filters={fl} onFiltersChange={setFl} videoUrl={vu || ''} />}
+            </div>
+
+            {/* Actions */}
+            <div className="p-2 border-t border-white/5 space-y-1.5 shrink-0">
+              <button onClick={add}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-white/5 text-zinc-400 text-xs hover:bg-white/10 hover:text-zinc-200 transition-all border border-white/5">
+                <Plus className="h-3.5 w-3.5" /> Add Clip
+              </button>
+              <div className="flex gap-1.5">
+                <button onClick={onCancel} className="flex-1 py-2 rounded-lg text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
+                <button onClick={() => setPreview(true)}
+                  className={cn('flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-all', hasEdits ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/5 text-zinc-600')}>
+                  <Eye className="h-3.5 w-3.5" /> Preview
                 </button>
-              )
-            })}
-          </div>
-
-          {/* Tab content — scrollable */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            <TabContent />
+                <button onClick={done} className="flex-1 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-xs font-semibold shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-[0.97] transition-all">
+                  <Check className="h-3.5 w-3.5 inline mr-1" />Done
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* Overlay badges */}
-        {(overlays.length > 0 || selectedTrack || voiceoverBlob || filters.preset) && (
-          <div className="flex flex-wrap gap-1.5 mt-2 p-2 rounded-lg bg-zinc-900/50 border border-zinc-800">
-            {overlays.length > 0 && <span className="text-[10px] px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{overlays.length} overlay{overlays.length !== 1 ? 's' : ''}</span>}
-            {selectedTrack && <span className="text-[10px] px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">🎵 Music</span>}
-            {voiceoverBlob && <span className="text-[10px] px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">🎤 Voice</span>}
-            {filters.preset && <span className="text-[10px] px-2 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">✨ {filters.preset}</span>}
-            {thumbnail && <span className="text-[10px] px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">📸 Thumbnail</span>}
-          </div>
-        )}
-
-        {/* Action buttons */}
-        <div className="flex gap-2 mt-3">
-          <input type="file" accept="video/*" id="add-clip-input" className="hidden" onChange={e => {
-            const f = e.target.files?.[0]
-            if (!f) return
-            const id = `clip-${clips.length + 1}-${Date.now()}`
-            const url = URL.createObjectURL(f)
-            setClips(prev => [...prev, { id, file: f, url, startTime: 0, endTime: 0 }])
-            e.target.value = ''
-          }} />
-          <Button variant="outline" onClick={onCancel} size="sm">Cancel</Button>
-          <Button variant="outline" size="sm" className="gap-1" onClick={() => document.getElementById('add-clip-input')?.click()}>
-            <Plus className="h-3.5 w-3.5" /> Clip
-          </Button>
-          <div className="flex-1" />
-          <Button size="sm" className="gap-1.5" onClick={handleDone}>
-            <Check className="h-3.5 w-3.5" /> Done
-          </Button>
-        </div>
-      </div>
-
-      {/* Thumbnail picker — below both columns */}
-      <div className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 sm:p-4">
-        <ThumbnailPicker
-          videoUrl={videoUrl || ''}
-          duration={duration}
-          thumbnail={thumbnail}
-          onThumbnailChange={setThumbnail}
-        />
       </div>
     </div>
   )

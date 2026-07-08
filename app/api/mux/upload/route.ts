@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd } = body
+    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl } = body
 
     const muxId = process.env.MUX_TOKEN_ID ?? ''
     if (!muxId || muxId.startsWith('your-') || muxId.length < 10) {
@@ -76,6 +76,10 @@ export async function POST(req: NextRequest) {
         station_id: stationId ?? null,
         clip_start: clipStart ?? null,
         clip_end: clipEnd ?? null,
+        edit_overlays: overlays ?? null,
+        edit_music_track: musicTrack ?? null,
+        edit_filters: filters ?? null,
+        edit_voiceover_url: voiceoverUrl ?? null,
       })
       .select('id')
       .single()

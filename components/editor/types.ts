@@ -25,6 +25,7 @@ export interface EditorOutput {
   overlays: Overlay[]
   musicTrack: string | null
   voiceoverBlob: Blob | null
+  filters: FilterSettings
 }
 
 // ---- NEW TYPES ----
@@ -49,7 +50,7 @@ export const DEFAULT_FILTERS: FilterSettings = {
 
 export interface TimelineClip {
   id: string
-  type: 'video' | 'text' | 'music' | 'voice' | 'sticker'
+  type: 'video' | 'text' | 'music' | 'voice' | 'sticker' | 'overlay'
   label: string
   startTime: number
   endTime: number

@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Video, Flag, Settings,
-  ShieldCheck, Shield, LogOut, BarChart2, ClipboardList, X, BadgeDollarSign, Crown, Wallet, Tv,
+  ShieldCheck, Shield, LogOut, BarChart2, ClipboardList, X,
+  BadgeDollarSign, Crown, Wallet, Tv, MessageSquare,
 } from 'lucide-react'
 import Logo from '@/components/layout/Logo'
 import { createClient } from '@/lib/supabase/client'
@@ -20,10 +21,11 @@ interface AdminSidebarProps {
 const ADMIN_NAV = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { href: '/admin/tv-lineup',    label: 'TV Lineup',     icon: Tv              },
-  { href: '/admin/moderation', label: 'Moderation', icon: ClipboardList },
-  { href: '/admin/users', label: 'Users', icon: Users },
-  { href: '/admin/videos', label: 'Videos', icon: Video },
-  { href: '/admin/reports', label: 'Reports', icon: Flag },
+  { href: '/admin/moderation',  label: 'Moderation',  icon: ClipboardList },
+  { href: '/admin/users',       label: 'Users',       icon: Users },
+  { href: '/admin/videos',      label: 'Videos',      icon: Video },
+  { href: '/admin/comments',    label: 'Comments',    icon: MessageSquare },
+  { href: '/admin/reports',     label: 'Reports',     icon: Flag },
   { href: '/admin/analytics', label: 'Analytics', icon: BarChart2 },
   { href: '/admin/credits',       label: 'Credits',       icon: BadgeDollarSign },
   { href: '/admin/monetization',  label: 'Monetization',  icon: Wallet          },

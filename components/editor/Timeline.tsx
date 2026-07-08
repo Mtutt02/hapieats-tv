@@ -12,6 +12,7 @@ interface TimelineProps {
   currentTime: number
   onSeek: (time: number) => void
   onDeleteClip: (trackId: string, clipId: string) => void
+  onSelectClip?: (clipId: string) => void
   zoom: number // 1-5
   onZoomChange: (zoom: number) => void
 }
@@ -213,6 +214,7 @@ export default function Timeline({
                       onClick={(e) => {
                         e.stopPropagation()
                         setSelectedClip({ trackId: track.id, clipId: clip.id })
+                        onSelectClip?.(clip.id)
                       }}
                     >
                       <span className="text-[9px] text-white/80 truncate font-medium">

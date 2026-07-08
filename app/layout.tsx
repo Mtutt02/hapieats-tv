@@ -20,6 +20,7 @@ const BASE_URL = 'https://hapieatstv.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
+  icons: { icon: '/favicon.svg', shortcut: '/favicon.svg', apple: '/favicon.svg' },
   title: { default: 'HapiEats TV', template: '%s | HapiEats TV' },
   description: 'Watch and support food creators on HapiEats TV. Free and premium food videos, live streams, cooking classes, and recipes — all in one place.',
   keywords: [

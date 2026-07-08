@@ -9,6 +9,31 @@ interface BackgroundRemovalProps {
   file: File
 }
 
+/**
+ * Background Removal Component
+ *
+ * ⚠️ CURRENT STATUS: Demo / Placeholder
+ *
+ * This component captures a single frame from the video and applies a
+ * simple distance-based transparency effect (bright edges → transparent).
+ * It does NOT use real ML-based segmentation (e.g. MediaPipe, remove.bg).
+ *
+ * To make this production-ready:
+ *   1. Integrate MediaPipe SelfieSegmentation (TensorFlow.js):
+ *      - npm install @mediapipe/selfie_segmentation
+ *      - Process each frame via canvas compositor in lib/video-compositor.ts
+ *   2. OR use a cloud API like remove.bg (add api key to env):
+ *      - POST to https://api.remove.bg/v1.0/removebg
+ *      - Requires REMOVE_BG_API_KEY in environment
+ *   3. The compositor in lib/video-compositor.ts can be extended to apply
+ *      per-frame segmentation during final render.
+ *
+ * Required API keys for production:
+ *   - MediaPipe: none (runs client-side via WASM)
+ *   - remove.bg: REMOVE_BG_API_KEY env var ($99+/mo for 5000 calls)
+ *
+ * PremiumGate checks /api/creator/monetization → isCreator or hasCredits.
+ */
 export default function BackgroundRemoval({ file }: BackgroundRemovalProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)

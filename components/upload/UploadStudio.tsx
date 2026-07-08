@@ -1,41 +1,29 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
 import {
-  UploadCloud, Film, AlertCircle, X, Globe, Tv,
-  Scissors, Wand2, Tag, Eye, DollarSign, ArrowRight, CheckCircle2,
-  ChevronLeft, ChevronRight, Clock, Sparkles, Share2, Lock,
-  Hash, Image, Music, Crop, Type, Mic,
+  UploadCloud, AlertCircle, Globe, Lock, Sparkles,
+  ArrowRight, CheckCircle2, Play, Pause, Scissors, X, Wand2, Plus, Film,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import EditorPanel from '@/components/editor/EditorPanel'
 import type { EditorOutput } from '@/components/editor/types'
 import { useUploadStore } from '@/lib/upload-store'
+import { composeFinalVideo } from '@/lib/video-compositor'
 
 interface Channel { id: string; name: string; slug: string }
 interface Station { id: string; name: string }
+interface ClipInfo { startTime: number; endTime: number; duration: number }
 
 interface UploadStudioProps {
   channels: Channel[]
   preselectedStation?: Station | null
   isCreator?: boolean
-}
-
-interface ClipInfo { startTime: number; endTime: number; duration: number }
-
-type Step = 'file' | 'trim' | 'details' | 'uploading' | 'done'
-
-function formatDuration(s: number) {
-  const m = Math.floor(s / 60)
-  const sec = Math.floor(s % 60)
-  return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
 function formatBytes(bytes: number): string {
@@ -44,190 +32,151 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
-function uploadEstimate(bytes: number): string {
-  const seconds = bytes / (2.5 * 1024 * 1024)
-  if (seconds < 60) return 'under a minute'
-  if (seconds < 3600) return `~${Math.ceil(seconds / 60)} min`
-  return `~${(seconds / 3600).toFixed(1)} hr`
-}
-
 const MAX_UPLOAD_BYTES = 20 * 1024 ** 3
 
-const STEPS = [
-  { id: 'file' as Step, label: 'Select', icon: Film },
-  { id: 'trim' as Step, label: 'Trim', icon: Scissors },
-  { id: 'details' as Step, label: 'Details', icon: Sparkles },
-  { id: 'uploading' as Step, label: 'Upload', icon: UploadCloud },
-]
-
-function StepBar({ current }: { current: Step }) {
-  const idx = STEPS.findIndex(s => s.id === current)
-  return (
-    <div className="flex items-center gap-0 mb-8">
-      {STEPS.map((s, i) => {
-        const Icon = s.icon
-        const isActive = i <= idx
-        const isCurrent = s.id === current
-        return (
-          <div key={s.id} className="flex items-center flex-1 last:flex-none">
-            <div
-              className={cn(
-                'flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all',
-                isCurrent ? 'bg-primary/15 text-primary border border-primary/30' : '',
-                isActive && !isCurrent ? 'text-zinc-400' : '',
-                !isActive ? 'text-zinc-700' : '',
-              )}
-            >
-              <Icon className={cn('h-3.5 w-3.5', isCurrent ? 'text-primary' : '')} />
-              <span className="hidden sm:inline">{s.label}</span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div className={cn('flex-1 h-px mx-2', i < idx ? 'bg-primary/40' : 'bg-zinc-800')} />
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export default function UploadStudio({ channels, preselectedStation, isCreator = false }: UploadStudioProps) {
+export default function UploadStudio({ channels }: UploadStudioProps) {
   const router = useRouter()
   const uploadStore = useUploadStore()
 
-  const [step, setStep] = useState<Step>('file')
   const [files, setFiles] = useState<File[]>([])
-  const [clip, setClip] = useState<ClipInfo | null>(null)
+  const [step, setStep] = useState<'select' | 'edit' | 'uploading' | 'done'>('select')
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [editorOutput, setEditorOutput] = useState<EditorOutput | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
-  const [stationId] = useState<string | null>(preselectedStation?.id ?? null)
   const [uploadedVideoId, setUploadedVideoId] = useState<string | null>(null)
+  const [composingProgress, setComposingProgress] = useState(0)
+  const [isComposing, setIsComposing] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [tags, setTags] = useState('')
-  const [visibility, setVisibility] = useState<'public' | 'private' | 'unlisted'>('public')
-  const [pricingModel, setPricingModel] = useState<'free' | 'pay_per_view' | 'subscription'>('free')
-  const [price, setPrice] = useState('')
-  const [postType, setPostType] = useState<'general' | 'channel'>('general')
-  const [channelId, setChannelId] = useState('')
+  const [visibility, setVisibility] = useState<'public' | 'private'>('public')
   const [titleError, setTitleError] = useState<string | null>(null)
+  const [showTutorial, setShowTutorial] = useState(true)
+
+  const fileSizeLabel = files[0] ? formatBytes(files[0].size) : ''
 
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
     if (accepted.length === 0) return
-    // Check each file size
-    for (const f of accepted) {
-      if (f.size > MAX_UPLOAD_BYTES) {
-        setDropError(`File ${f.name} is ${formatBytes(f.size)} — 20 GB max.`)
-        return
-      }
+    const f = accepted[0]
+    if (f.size > MAX_UPLOAD_BYTES) {
+      setDropError(`File is ${formatBytes(f.size)} — 20 GB max.`)
+      return
     }
     setFiles(accepted)
-    setClip(null)
-    setEditorOutput(null)
-    setStep('trim')
+    setVideoUrl(URL.createObjectURL(accepted[0]))
+    setStep('edit')
   }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { 'video/*': [] },
-    maxFiles: 10,
-    disabled: step !== 'file',
+    onDrop, accept: { 'video/*': [] }, maxFiles: 1, disabled: step !== 'select',
   })
 
   const handleUpload = async () => {
     if (files.length === 0) return
     if (!title.trim()) { setTitleError('Add a title first'); return }
 
-    const tagsArray = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : []
+    // Compose the final video with all edits applied
+    const hasEdits = editorOutput && (
+      (editorOutput.overlays && editorOutput.overlays.length > 0) ||
+      editorOutput.filters?.preset ||
+      editorOutput.filters?.brightness !== 0 ||
+      editorOutput.filters?.contrast !== 0 ||
+      editorOutput.filters?.saturation !== 0 ||
+      editorOutput.filters?.warmth !== 0 ||
+      editorOutput.filters?.blur !== 0 ||
+      editorOutput.musicTrack ||
+      editorOutput.voiceoverBlob ||
+      editorOutput.clipStart !== 0 ||
+      editorOutput.clipEnd !== files[0]?.size // approximate check
+    )
 
-    const overlaysJson = (editorOutput?.overlays && editorOutput.overlays.length > 0)
-      ? JSON.stringify(editorOutput.overlays)
-      : null
+    let uploadFile = files[0]
 
-    await uploadStore.startUpload(files[0], {
+    if (hasEdits && editorOutput) {
+      setIsComposing(true)
+      setComposingProgress(0)
+      try {
+        const composedBlob = await composeFinalVideo(files[0], editorOutput, {
+          onProgress: setComposingProgress,
+        })
+        uploadFile = new File([composedBlob], files[0].name.replace(/\.[^.]+$/, '') + '_edited.' +
+          (composedBlob.type.includes('webm') ? 'webm' : 'mp4'),
+          { type: composedBlob.type })
+      } catch (err) {
+        console.warn('Video composition failed, uploading original:', err)
+        // Fall back to original file + store edit metadata
+      }
+      setIsComposing(false)
+    }
+
+    const overlaysJson = (editorOutput?.overlays && editorOutput.overlays.length > 0) ? JSON.stringify(editorOutput.overlays) : null
+    const filtersJson = editorOutput?.filters ? JSON.stringify(editorOutput.filters) : null
+    await uploadStore.startUpload(uploadFile, {
       title: title.trim(),
       description: description.trim() || undefined,
-      channelId: postType === 'channel' ? (channelId || null) : null,
+      channelId: channels[0]?.id || null,
       visibility,
-      pricingModel,
-      price: pricingModel === 'pay_per_view' ? (parseFloat(price) || null) : null,
-      postType,
-      tags: tagsArray.length > 0 ? tagsArray.join(',') : null,
-      stationId: stationId ?? null,
-      clipStart: clip?.startTime ?? null,
-      clipEnd: clip?.endTime ?? null,
+      pricingModel: 'free', postType: 'general', tags: null,
+      stationId: null,
+      clipStart: editorOutput?.clipStart ?? null,
+      clipEnd: editorOutput?.clipEnd ?? null,
       overlays: overlaysJson,
       musicTrack: editorOutput?.musicTrack ?? null,
+      filters: filtersJson,
+      voiceoverBlob: editorOutput?.voiceoverBlob ?? null,
     })
-
-    if (uploadStore.status !== 'error') {
-      setStep('uploading')
-      setUploadedVideoId(uploadStore.videoId)
-    }
+    if (uploadStore.status !== 'error') { setStep('uploading'); setUploadedVideoId(uploadStore.videoId) }
   }
 
-  const fileSizeLabel = files[0] ? formatBytes(files[0].size) : ''
-  const fileTimeLabel = files[0] ? uploadEstimate(files[0].size) : ''
-  const videoDuration = clip
-    ? `Clipped: ${formatDuration(clip.startTime)} — ${formatDuration(clip.endTime)} (${Math.floor(clip.duration / 60)}:${String(Math.floor(clip.duration % 60)).padStart(2, '0')})`
-    : 'Full video'
-
-  const hasEditorAddons = editorOutput && (
-    (editorOutput.overlays && editorOutput.overlays.length > 0) ||
-    editorOutput.musicTrack ||
-    editorOutput.voiceoverBlob
-  )
-
-  if (step === 'uploading' || step === 'done') {
+  if (step === 'uploading' || step === 'done' || isComposing) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-        {step === 'uploading' ? (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
+        {isComposing ? (
           <>
-            <div className="relative mb-8">
-              <div className="h-24 w-24 rounded-full bg-primary/10 flex items-center justify-center">
-                <UploadCloud className="h-10 w-10 text-primary animate-bounce" />
+            <div className="relative mb-6">
+              <div className="h-20 w-20 rounded-full bg-purple-500/10 flex items-center justify-center">
+                <Wand2 className="h-8 w-8 text-purple-400 animate-pulse" />
               </div>
-              {uploadStore.progress > 0 && (
-                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-xs font-mono text-primary">
-                  {uploadStore.progress}%
+              {composingProgress > 0 && (
+                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-xs font-mono text-purple-400">
+                  {composingProgress}%
                 </div>
               )}
             </div>
-            <h2 className="text-2xl font-bold mb-2">Upload in progress</h2>
-            <p className="text-zinc-400 text-sm max-w-md mb-3">
-              {title} is uploading. You can navigate away.
-            </p>
-            {fileSizeLabel && (
-              <div className="flex items-center gap-3 text-xs text-zinc-500 mb-8">
-                <span>{fileSizeLabel}</span>
-                <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                <span>~{fileTimeLabel}</span>
+            <h2 className="text-xl font-bold mb-2">Applying edits...</h2>
+            <p className="text-zinc-400 text-sm">Rendering overlays, filters, music, and trim into final video.</p>
+            <div className="w-64 h-1.5 rounded-full bg-zinc-800 mt-6 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-purple-500 to-primary transition-all duration-300"
+                style={{ width: `${composingProgress}%` }}
+              />
+            </div>
+          </>
+        ) : step === 'uploading' ? (
+          <>
+            <div className="relative mb-6">
+              <div className="h-20 w-20 rounded-full bg-primary/10 flex items-center justify-center">
+                <UploadCloud className="h-8 w-8 text-primary animate-bounce" />
               </div>
-            )}
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => router.push('/')}>Browse videos</Button>
-              <Button onClick={() => router.push('/studio/videos')} className="gap-2">
-                My videos <ArrowRight className="h-4 w-4" />
-              </Button>
+              {uploadStore.progress > 0 && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-xs font-mono text-primary">{uploadStore.progress}%</div>}
+            </div>
+            <h2 className="text-xl font-bold mb-2">Uploading...</h2>
+            <p className="text-zinc-400 text-sm">Your video is uploading.</p>
+            <div className="flex gap-3 mt-6">
+              <Button variant="outline" onClick={() => router.push('/')}>Browse</Button>
+              <Button onClick={() => router.push('/studio/videos')}>My videos</Button>
             </div>
           </>
         ) : (
           <>
-            <div className="h-24 w-24 rounded-full bg-emerald-500/10 flex items-center justify-center mb-8">
-              <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+            <div className="h-20 w-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6">
+              <CheckCircle2 className="h-8 w-8 text-emerald-400" />
             </div>
-            <h2 className="text-2xl font-bold mb-2">Published!</h2>
-            <p className="text-zinc-400 text-sm mb-8">{title} is live.</p>
+            <h2 className="text-xl font-bold mb-2">Published!</h2>
+            <p className="text-zinc-400 text-sm mb-6">{title} is live.</p>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setFiles([]); setStep('file'); setTitle(''); setDescription(''); setTags('') }}>
-                Upload another
-              </Button>
-              {uploadedVideoId && (
-                <Button onClick={() => router.push(`/watch/${uploadedVideoId}`)} className="gap-2">
-                  View video <ArrowRight className="h-4 w-4" />
-                </Button>
-              )}
+              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setVideoUrl(null) }}>Upload another</Button>
+              {uploadedVideoId && <Button onClick={() => router.push(`/watch/${uploadedVideoId}`)}>View video <ArrowRight className="h-4 w-4 ml-1" /></Button>}
             </div>
           </>
         )}
@@ -237,281 +186,52 @@ export default function UploadStudio({ channels, preselectedStation, isCreator =
 
   return (
     <div className="max-w-5xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="h-10 w-10 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center">
-          <Wand2 className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold">HapiEats Creator Studio</h1>
-          <p className="text-xs text-zinc-500">Upload, trim, and publish your food content</p>
-        </div>
-      </div>
-
-      <StepBar current={step} />
-
-      {step === 'file' && (
-        <div
-          {...getRootProps()}
-          className={cn(
-            'border-2 border-dashed rounded-2xl cursor-pointer transition-all group',
-            'flex flex-col items-center justify-center text-center py-24 px-6',
-            isDragActive
-              ? 'border-primary bg-primary/5 scale-[1.01]'
-              : 'border-zinc-700 hover:border-primary/50 hover:bg-zinc-900/30',
-          )}
-        >
+      {/* Select step */}
+      {step === 'select' && (
+        <div {...getRootProps()} className={cn('border-2 border-dashed rounded-2xl cursor-pointer transition-all text-center py-24 px-6', isDragActive ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-zinc-700 hover:border-primary/50 hover:bg-zinc-900/30')}>
           <input {...getInputProps()} />
-          <div className="h-20 w-20 rounded-2xl bg-primary/10 flex items-center justify-center mb-6 group-hover:bg-primary/20 transition-colors">
-            <UploadCloud className="h-10 w-10 text-primary" />
-          </div>
-          <p className="text-xl font-bold mb-1">
-            {isDragActive ? 'Drop your video' : 'Drop a video to get started'}
-          </p>
+          <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4"><UploadCloud className="h-8 w-8 text-primary" /></div>
+          <p className="text-lg font-bold mb-1">{isDragActive ? 'Drop your video' : 'Drop a video to start'}</p>
           <p className="text-zinc-500 text-sm mb-6">or click to browse files</p>
-          <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
-            {['MP4', 'MOV', 'MKV', 'WebM'].map(fmt => (
-              <span key={fmt} className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 font-mono">{fmt}</span>
-            ))}
-            <span className="text-zinc-700 mx-1">·</span>
-            <span className="text-zinc-600">Up to 20 GB / 4 hrs</span>
+          <div className="flex flex-wrap justify-center gap-2 text-xs">
+            {['MP4', 'MOV', 'WebM'].map(fmt => (<span key={fmt} className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 font-mono">{fmt}</span>))}
+            <span className="text-zinc-700 mx-1">·</span><span className="text-zinc-600">Up to 20 GB</span>
           </div>
-          {dropError && (
-            <div className="mt-5 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs max-w-sm">
-              <AlertCircle className="h-4 w-4 shrink-0" />{dropError}
-            </div>
-          )}
+          {dropError && <div className="mt-5 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs max-w-sm mx-auto"><AlertCircle className="h-4 w-4 shrink-0" />{dropError}</div>}
         </div>
       )}
 
-      {step === 'trim' && files.length > 0 && (
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Wand2 className="h-5 w-5 text-primary" />
-              <div>
-                <h2 className="font-bold">Edit your video</h2>
-                <p className="text-xs text-zinc-500">Trim, add text, music, voice over, and stickers</p>
-              </div>
+      {/* Edit step — fixed viewport layout */}
+      {step === 'edit' && videoUrl && (
+        <div className="flex flex-col gap-0" style={{ height: 'calc(100vh - 180px)' }}>
+          {/* Top bar: Details + Publish */}
+          <div className="flex items-center gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-t-xl shrink-0">
+            <div className="flex-1 min-w-0">
+              <input value={title} onChange={e => { setTitle(e.target.value); setTitleError(null) }}
+                placeholder="Add a title..." className="w-full bg-transparent border-0 text-white text-lg font-bold placeholder-zinc-600 focus:outline-none" />
             </div>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => { setFiles([]); setStep('file') }} className="text-zinc-500">
-                <X className="h-4 w-4 mr-1" /> Discard
+            <div className="flex items-center gap-2 shrink-0">
+              {[{ value: 'public' as const, icon: Globe }, { value: 'private' as const, icon: Lock }].map(opt => (
+                <button key={opt.value} onClick={() => setVisibility(opt.value)}
+                  className={cn('p-2 rounded-lg border transition-all', visibility === opt.value ? 'border-primary bg-primary/10 text-primary' : 'border-zinc-800 text-zinc-600 hover:text-zinc-400')}>
+                  <opt.icon className="h-4 w-4" />
+                </button>
+              ))}
+              <Button onClick={handleUpload} disabled={!title.trim() || uploadStore.status === 'uploading' || isComposing} className="gap-2 h-10">
+                <UploadCloud className="h-4 w-4" /> Publish
               </Button>
             </div>
           </div>
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+
+          {/* Editor — fills remaining height, no scrolling */}
+          <div className="flex-1 min-h-0">
             <EditorPanel
               files={files}
-              onComplete={(output) => {
-                setEditorOutput(output)
-                setClip({
-                  startTime: output.clipStart,
-                  endTime: output.clipEnd,
-                  duration: output.clipEnd - output.clipStart,
-                })
-                setStep('details')
-              }}
-              onCancel={() => { setFiles([]); setStep('file') }}
+              onComplete={(output) => { setEditorOutput(output) }}
+              onCancel={() => { setFiles([]); setStep('select'); setVideoUrl(null) }}
+              showTutorial={showTutorial}
+              onDismissTutorial={() => setShowTutorial(false)}
             />
-          </div>
-        </div>
-      )}
-
-      {step === 'details' && files.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4">
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Film className="h-6 w-6 text-primary" />
-              </div>
-              <div className="space-y-1">
-                <p className="font-semibold text-sm truncate">{files[0].name}</p>
-                <p className="text-xs text-zinc-500">{videoDuration}</p>
-                <div className="flex items-center gap-2 flex-wrap pt-1">
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono">{fileSizeLabel}</span>
-                  <span className="text-[11px] text-zinc-600">~{fileTimeLabel} to upload</span>
-                </div>
-              </div>
-              {hasEditorAddons && (
-                <div className="flex flex-wrap gap-1.5 pt-2">
-                  {editorOutput?.overlays && editorOutput.overlays.length > 0 && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                      {editorOutput.overlays.length} overlay{editorOutput.overlays.length !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {editorOutput?.musicTrack && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
-                      🎵 Music
-                    </span>
-                  )}
-                  {editorOutput?.voiceoverBlob && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
-                      🎤 Voice over
-                    </span>
-                  )}
-                </div>
-              )}
-              {files[0].size > 8 * 1024 ** 3 && (
-                <p className="text-[11px] text-amber-400/70">Large file — upload continues in the background.</p>
-              )}
-              <div className="flex gap-2 pt-1">
-                <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setStep('trim')}>
-                  <Wand2 className="h-3 w-3 mr-1" /> Edit video
-                </Button>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-red-400"
-                  onClick={() => { setFiles([]); setStep('file') }}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            {preselectedStation && (
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/20 text-sm">
-                <span className="text-primary font-medium">📡</span>
-                <span className="text-xs font-semibold">{preselectedStation.name}</span>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label className="text-[11px] text-zinc-500 uppercase tracking-widest">Post to</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {(['general', 'channel'] as const).map((type) => (
-                  <button key={type} type="button" onClick={() => setPostType(type)}
-                    className={cn(
-                      'flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all text-xs font-medium',
-                      postType === type
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-zinc-800 hover:border-zinc-600 text-zinc-500',
-                    )}>
-                    {type === 'general' ? <Globe className="h-5 w-5" /> : <Tv className="h-5 w-5" />}
-                    <span>{type === 'general' ? 'Main Feed' : 'My Channel'}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {postType === 'channel' && channels.length > 0 && (
-              <div>
-                <Label className="text-[11px] text-zinc-500 uppercase tracking-widest">Channel</Label>
-                <Select onValueChange={setChannelId} defaultValue={channels[0]?.id}>
-                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {channels.map(ch => <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <Button onClick={handleUpload}
-              disabled={!title.trim() || uploadStore.status === 'uploading'}
-              className="w-full gap-2 h-12 text-base mt-2">
-              <UploadCloud className="h-5 w-5" />
-              {uploadStore.status === 'uploading' ? `Uploading ${uploadStore.progress}%` : 'Publish video'}
-            </Button>
-
-            {uploadStore.status === 'error' && uploadStore.error && (
-              <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>{uploadStore.error}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-7">
-            <div>
-              <Label htmlFor="title" className="text-sm font-semibold">Title <span className="text-red-400">*</span></Label>
-              <Input id="title" value={title} onChange={e => { setTitle(e.target.value); setTitleError(null) }}
-                placeholder="Give your video a clear, descriptive title"
-                className={cn('mt-1.5 text-base', titleError ? 'border-red-500' : '')} />
-              {titleError && <p className="text-red-400 text-xs mt-1">{titleError}</p>}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <div>
-                <Label htmlFor="desc" className="text-sm font-semibold">Description</Label>
-                <Textarea id="desc" value={description} onChange={e => setDescription(e.target.value)}
-                  placeholder="What's this video about? Ingredients, story, tips…"
-                  rows={4} className="mt-1.5 resize-none" />
-              </div>
-              <div className="space-y-5">
-                <div>
-                  <Label htmlFor="tags" className="text-sm font-semibold flex items-center gap-1.5">
-                    <Hash className="h-3.5 w-3.5" /> Tags
-                  </Label>
-                  <Input id="tags" value={tags} onChange={e => setTags(e.target.value)}
-                    placeholder="ramen, japanese, cooking" className="mt-1.5" />
-                  <p className="text-[11px] text-zinc-600 mt-1">Comma-separated</p>
-                </div>
-
-                <div>
-                  <Label className="text-sm font-semibold">Visibility</Label>
-                  <div className="grid grid-cols-3 gap-2 mt-1.5">
-                    {[
-                      { value: 'public' as const, icon: Globe, label: 'Public' },
-                      { value: 'unlisted' as const, icon: Share2, label: 'Unlisted' },
-                      { value: 'private' as const, icon: Lock, label: 'Private' },
-                    ].map(opt => (
-                      <button key={opt.value} type="button" onClick={() => setVisibility(opt.value)}
-                        className={cn(
-                          'flex flex-col items-center gap-1 p-2.5 rounded-xl border text-xs font-medium transition-all',
-                          visibility === opt.value
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-zinc-800 hover:border-zinc-600 text-zinc-500',
-                        )}>
-                        <opt.icon className="h-4 w-4" />
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-sm font-semibold flex items-center gap-1.5">
-                    <DollarSign className="h-3.5 w-3.5" /> Pricing
-                  </Label>
-                  {isCreator ? (
-                    <div className="grid grid-cols-3 gap-2 mt-1.5">
-                      {[
-                        { value: 'free' as const, label: 'Free' },
-                        { value: 'pay_per_view' as const, label: 'Pay per view' },
-                        { value: 'subscription' as const, label: 'Subscribers' },
-                      ].map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setPricingModel(opt.value)}
-                          className={cn(
-                            'p-2.5 rounded-xl border text-xs font-medium transition-all',
-                            pricingModel === opt.value
-                              ? 'border-primary bg-primary/10 text-primary'
-                              : 'border-zinc-800 hover:border-zinc-600 text-zinc-500',
-                          )}>
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mt-1.5 px-3 py-2.5 rounded-lg border border-zinc-800 bg-zinc-900/50 text-xs text-zinc-500">
-                      Free — <a href="/creator/chef-verification" className="text-primary hover:underline">become a Creator</a> to monetize
-                    </div>
-                  )}
-                  {pricingModel === 'pay_per_view' && isCreator && (
-                    <div className="mt-2">
-                      <Input type="number" step="0.01" min="0.50" placeholder="4.99" value={price}
-                        onChange={e => setPrice(e.target.value)} className="max-w-[140px]" />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-4 border-t border-zinc-800">
-              <Button type="button" variant="ghost" onClick={() => setStep('trim')} className="text-zinc-500">
-                <ChevronLeft className="h-4 w-4 mr-1" /> Back to editor
-              </Button>
-              <Button onClick={handleUpload} disabled={!title.trim() || uploadStore.status === 'uploading'}
-                className="gap-2 h-11 px-6">
-                <UploadCloud className="h-4 w-4" />
-                {uploadStore.status === 'uploading' ? 'Uploading...' : 'Publish'}
-              </Button>
-            </div>
           </div>
         </div>
       )}
