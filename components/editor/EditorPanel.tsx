@@ -3,9 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   Scissors, Type, Music, Mic, Sticker, Palette,
-  Plus, Check, X, Play, Pause, Eye, Film, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
+  Plus, Check, X, Play, Pause, Eye, Film,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import TrimPanel from './TrimPanel'
 import TextOverlayPanel from './TextOverlayPanel'
@@ -108,24 +107,28 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
   const tracks = buildTracks(ov, sel, vb, cs, ce, clips)
   const hasEdits = ov.length > 0 || sel || vb || fl.preset
 
-  return preview ? (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
-      <div className="flex-1 relative flex items-center justify-center">
-        <video ref={vr} src={vu || ''} className="max-w-full max-h-full object-contain" autoPlay loop playsInline />
+  if (preview) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black flex flex-col">
+        <div className="flex-1 relative flex items-center justify-center">
+          <video ref={vr} src={vu || ''} className="max-w-full max-h-full object-contain" autoPlay loop playsInline />
+        </div>
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
+          <button onClick={() => setPreview(false)}
+            className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-md text-white text-sm font-medium border border-white/20 hover:bg-white/20 transition-all">
+            Back to Editor
+          </button>
+          <button onClick={done}
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg">
+            <Check className="h-4 w-4 inline mr-1.5" />Done
+          </button>
+        </div>
       </div>
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4">
-        <button onClick={() => setPreview(false)}
-          className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-md text-white text-sm font-medium border border-white/20 hover:bg-white/20 transition-all">
-          Back to Editor
-        </button>
-        <button onClick={done}
-          className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg">
-          <Check className="h-4 w-4 inline mr-1.5" />Done
-        </button>
-      </div>
-    </div>
-  ) : (
-    <div className="h-full flex flex-col bg-[#0a0a0f]">
+    )
+  }
+
+  return (
+    <div className="h-full flex flex-col bg-black overflow-hidden">
       {/* Tutorial */}
       {showTutorial && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
@@ -134,15 +137,15 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
               <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary to-orange-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary/20">
                 <Film className="h-8 w-8 text-white" />
               </div>
-              <h2 className="text-2xl font-bold text-white">CapCut-style Editor</h2>
-              <p className="text-zinc-400 text-sm mt-1">Edit in 4 steps</p>
+              <h2 className="text-2xl font-bold text-white">Video Editor</h2>
+              <p className="text-zinc-400 text-sm mt-1">Edit your video in a few simple steps</p>
             </div>
             <div className="space-y-3">
               {[
-                ['Trim & Cut', 'Adjust clip start and end.'],
+                ['Trim & Cut', 'Select start and end points.'],
                 ['Effects', 'Add text, music, filters, stickers.'],
-                ['Preview', 'Tap the eye icon to watch your edit.'],
-                ['Done', 'Publish when it looks good.'],
+                ['Preview', 'Watch your edit.'],
+                ['Done', 'Publish when ready.'],
               ].map(([s, d], i) => (
                 <div key={i} className="flex items-center gap-3 bg-white/5 rounded-xl p-3">
                   <div className="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-bold shrink-0">{i + 1}</div>
@@ -158,100 +161,85 @@ export default function EditorPanel({ files, onComplete, onCancel, showTutorial,
         </div>
       )}
 
-      {/* === CAPCUT-STYLE LAYOUT === */}
-      <div className="h-full flex flex-col bg-[#0a0a0f] overflow-hidden">
-        {/* ─── TOP: Video Preview (flexible height) ─── */}
-        <div className="flex-1 min-h-0 bg-black/90 relative flex items-center justify-center overflow-hidden">
-          {vu ? (
-            <>
-              <video ref={vr} src={vu}
-                className="w-full h-full object-contain"
-                onLoadedMetadata={onMeta}
-                onTimeUpdate={() => { try { if (vr.current) setCt(vr.current.currentTime) } catch {} }}
-                onPlay={() => setPlay(true)} onPause={() => setPlay(false)} onEnded={() => setPlay(false)}
-                playsInline />
-              {!play && (
-                <div className="absolute inset-0 flex items-center justify-center" onClick={toggle}>
-                  <div className="h-16 w-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-2xl hover:bg-white/30 transition-all cursor-pointer">
-                    <Play className="h-8 w-8 text-white ml-1" />
-                  </div>
+      {/* TikTok-style layout: preview fills space, bottom panel has tools+timeline */}
+      <div className="flex-1 min-h-0 bg-black/90 relative flex items-center justify-center">
+        {vu ? (
+          <>
+            <video ref={vr} src={vu}
+              className="w-full h-full object-contain"
+              onLoadedMetadata={onMeta}
+              onTimeUpdate={() => { try { if (vr.current) setCt(vr.current.currentTime) } catch {} }}
+              onPlay={() => setPlay(true)} onPause={() => setPlay(false)} onEnded={() => setPlay(false)}
+              playsInline />
+            {!play && (
+              <div className="absolute inset-0 flex items-center justify-center" onClick={toggle}>
+                <div className="h-16 w-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                  <Play className="h-8 w-8 text-white ml-1" />
                 </div>
-              )}
-              {/* Time badge bottom-right */}
-              <div className="absolute bottom-3 right-3 bg-black/70 rounded-lg px-3 py-1.5 text-sm text-white/90 font-mono">
-                {Math.floor(ct / 60)}:{(Math.floor(ct) % 60).toString().padStart(2, '0')} / {Math.floor((ce || dur) / 60)}:{(Math.floor(ce || dur) % 60).toString().padStart(2, '0')}
               </div>
-              {/* Edit badges */}
-              {hasEdits && (
-                <div className="absolute top-3 left-3 flex gap-1.5">
-                  {ov.length > 0 && <span className="text-xs px-2 py-1 rounded-full bg-primary/90 text-white font-medium">{ov.length} TX</span>}
-                  {sel && <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/90 text-white font-medium">MU</span>}
-                  {vb && <span className="text-xs px-2 py-1 rounded-full bg-amber-500/90 text-white font-medium">VO</span>}
-                  {fl.preset && <span className="text-xs px-2 py-1 rounded-full bg-purple-500/90 text-white font-medium capitalize">{fl.preset}</span>}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="text-zinc-600">Loading...</div>
-          )}
-          {/* Done top-right */}
-          <button onClick={done}
-            className="absolute top-3 right-3 px-5 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all z-10">
-            <Check className="h-4 w-4 inline mr-1.5" />Done
-          </button>
+            )}
+            <div className="absolute bottom-3 right-3 bg-black/60 rounded-lg px-2.5 py-1 text-xs text-white/80 font-mono">
+              {Math.floor(ct / 60)}:{(Math.floor(ct) % 60).toString().padStart(2, '0')} / {Math.floor((ce || dur) / 60)}:{(Math.floor(ce || dur) % 60).toString().padStart(2, '0')}
+            </div>
+          </>
+        ) : (
+          <div className="text-zinc-600 text-sm">Loading...</div>
+        )}
+        <button onClick={done}
+          className="absolute top-3 right-3 px-5 py-2 rounded-lg bg-primary text-white text-sm font-semibold active:scale-[0.97] z-10">
+          <Check className="h-4 w-4 inline mr-1.5" />Done
+        </button>
+      </div>
+
+      {/* Bottom panel: tab bar + content + timeline + actions */}
+      <div className="shrink-0 bg-[#1a1a1a] border-t border-white/10">
+        {/* Tab bar - TikTok style icon buttons */}
+        <div className="flex gap-1 px-2 py-2 overflow-x-auto scrollbar-none border-b border-white/5">
+          {TABS.map(id => {
+            const I = TI[id]
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                className={cn('flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-all min-w-[56px]', tab === id ? 'bg-primary/20 text-primary' : 'text-zinc-500 hover:text-zinc-300')}>
+                <I className="h-5 w-5" />
+                <span>{TL[id]}</span>
+              </button>
+            )
+          })}
         </div>
 
-        {/* ─── MIDDLE: Tool tabs (horizontal, scrollable) ─── */}
-        <div className="shrink-0 px-2 py-2 bg-zinc-900/90 border-t border-white/5">
-          <div className="flex gap-2 overflow-x-auto scrollbar-none">
-            {TABS.map(id => {
-              const I = TI[id]
-              return (
-                <button key={id} onClick={() => setTab(id)}
-                  className={cn('flex flex-col items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium whitespace-nowrap transition-all min-w-[72px]', tab === id ? 'bg-primary/20 text-primary border border-primary/30' : 'bg-white/5 text-zinc-400 border border-transparent hover:text-zinc-200 hover:bg-white/10')}>
-                  <I className="h-5 w-5" />
-                  <span>{TL[id]}</span>
-                </button>
-              )
-            })}
-          </div>
+        {/* Tab content panel */}
+        <div className="overflow-y-auto px-3 py-3 max-h-[200px]">
+          {tab === 'trim' && <TrimPanel file={files[0]} clipStart={cs} clipEnd={ce} onTrimChange={(s, e) => { setCs(s); setCe(e) }} />}
+          {tab === 'text' && <TextOverlayPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
+          {tab === 'music' && <MusicPanel selectedTrack={sel} onTrackSelect={setSel} />}
+          {tab === 'voice' && <VoiceOverPanel blob={vb} onBlobChange={setVb} />}
+          {tab === 'stickers' && <StickerPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
+          {tab === 'filters' && <FilterPanel filters={fl} onFiltersChange={setFl} videoUrl={vu || ''} />}
         </div>
 
-        {/* ─── Tool content (expands when a tool is selected) ─── */}
-        <div className={cn('overflow-y-auto bg-zinc-900/50 border-t border-white/5 transition-all', tab !== 'trim' ? 'min-h-[200px] max-h-[280px]' : 'min-h-[100px] max-h-[180px]')}>
-          <div className="p-4">
-            {tab === 'trim' && <TrimPanel file={files[0]} clipStart={cs} clipEnd={ce} onTrimChange={(s, e) => { setCs(s); setCe(e) }} />}
-            {tab === 'text' && <TextOverlayPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
-            {tab === 'music' && <MusicPanel selectedTrack={sel} onTrackSelect={setSel} />}
-            {tab === 'voice' && <VoiceOverPanel blob={vb} onBlobChange={setVb} />}
-            {tab === 'stickers' && <StickerPanel overlays={ov} onOverlaysChange={setOv} videoDuration={dur} />}
-            {tab === 'filters' && <FilterPanel filters={fl} onFiltersChange={setFl} videoUrl={vu || ''} />}
-          </div>
-        </div>
-
-        {/* ─── BOTTOM: Timeline strip ─── */}
-        <div className="shrink-0 h-24 bg-zinc-950 border-t border-white/5">
+        {/* Timeline strip */}
+        <div className="h-16 bg-black/60 border-t border-white/5">
           <div className="w-full h-full overflow-x-auto overflow-y-hidden scrollbar-none">
-            <div className="min-w-[500px] h-full p-1">
+            <div className="min-w-[400px] h-full p-1">
               <Timeline tracks={tracks} duration={ce || dur} currentTime={ct} onSeek={seek} onDeleteClip={del} onSelectClip={selClip} zoom={zm} onZoomChange={setZm} />
             </div>
           </div>
         </div>
 
-        {/* ─── BOTTOM ACTION BAR: CapCut-style buttons ─── */}
-        <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-zinc-900 border-t border-white/5">
-          <div className="flex items-center gap-3 overflow-x-auto scrollbar-none">
-            <button onClick={add} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-zinc-300 text-sm hover:bg-white/20 transition-all whitespace-nowrap">
-              <Plus className="h-4 w-4" /> Add
+        {/* Bottom action row - tool buttons + Done */}
+        <div className="flex items-center justify-between px-3 py-2 border-t border-white/5">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <button onClick={add} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/10 text-zinc-300 text-xs hover:bg-white/20 whitespace-nowrap">
+              <Plus className="h-3.5 w-3.5" /> Add
             </button>
-            <div className="w-px h-5 bg-zinc-700" />
-            <button onClick={() => setPreview(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-zinc-400 text-sm hover:bg-white/10 hover:text-zinc-200 transition-all whitespace-nowrap">
-              <Eye className="h-4 w-4" /> Preview
+            <div className="w-px h-4 bg-zinc-700" />
+            <button onClick={() => setPreview(true)} className="px-3 py-1.5 rounded-lg text-zinc-400 text-xs hover:bg-white/10 hover:text-zinc-200 whitespace-nowrap">
+              <Eye className="h-3.5 w-3.5 inline mr-1" />Preview
             </button>
-            <div className="w-px h-5 bg-zinc-700" />
-            <button onClick={onCancel} className="text-zinc-500 text-sm hover:text-zinc-300 transition-colors whitespace-nowrap">Cancel</button>
+            <div className="w-px h-4 bg-zinc-700" />
+            <button onClick={onCancel} className="px-2 py-1.5 text-zinc-500 text-xs hover:text-zinc-300 whitespace-nowrap">Cancel</button>
           </div>
-          <button onClick={done} className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-orange-500 text-white text-sm font-semibold shadow-lg hover:shadow-primary/30 active:scale-[0.97] transition-all">
+          <button onClick={done} className="px-6 py-2 rounded-lg bg-primary text-white text-sm font-semibold active:scale-[0.97]">
             <Check className="h-4 w-4 inline mr-1.5" />Done
           </button>
         </div>
