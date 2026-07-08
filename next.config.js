@@ -1,11 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: {
-    // Lint errors fixed separately; don't block production builds
     ignoreDuringBuilds: true,
   },
   typescript: {
-    // TS errors fixed separately; don't block production builds
     ignoreBuildErrors: true,
   },
   images: {
@@ -20,13 +18,22 @@ const nextConfig = {
       { protocol: 'https', hostname: 'picsum.photos' },
     ],
   },
+  experimental: {
+    serverComponentsExternalPackages: ['@remotion/bundler', '@remotion/renderer', 'esbuild'],
+  },
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : []),
+        '@remotion/bundler',
+        '@remotion/renderer',
+        'esbuild',
+      ]
+    }
+    return config
+  },
   async headers() {
-    return [
-      {
-        source: '/api/mux/webhook',
-        headers: [{ key: 'Content-Type', value: 'application/json' }],
-      },
-    ]
+    return [{ source: '/api/mux/webhook', headers: [{ key: 'Content-Type', value: 'application/json' }] }]
   },
 }
 

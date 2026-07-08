@@ -80,6 +80,11 @@ export default async function StudioHomePage() {
                 <span className="hidden sm:inline">Upload</span>
               </Button>
             </Link>
+            <Link href="/studio/editor">
+              <Button size="sm" variant="outline" className="gap-1.5 text-sm border-primary/30 text-primary hover:bg-primary/10">
+                <span className="hidden sm:inline">Editor</span>
+              </Button>
+            </Link>
           </div>
         </div>
 
@@ -131,15 +136,15 @@ export default async function StudioHomePage() {
                   </Link>
 
                   <Link
-                    href="/studio/upload?mode=editor"
+                    href="/studio/editor"
                     className="group relative flex flex-col gap-3 p-5 rounded-2xl border border-zinc-800 hover:border-primary/50 hover:bg-zinc-900/80 transition-all"
                   >
                     <div className="h-10 w-10 rounded-xl bg-zinc-800 flex items-center justify-center">
                       <Wand2 className="h-5 w-5 text-zinc-400 group-hover:text-primary transition-colors" />
                     </div>
                     <div>
-                      <p className="font-semibold text-sm">TV Studio</p>
-                      <p className="text-xs text-zinc-400 mt-0.5 leading-snug">AI-powered video editing</p>
+                      <p className="font-semibold text-sm">TV Studio Editor</p>
+                      <p className="text-xs text-zinc-400 mt-0.5 leading-snug">Multi-track editing, keyframes & AI tools</p>
                     </div>
                     <ArrowRight className="absolute bottom-4 right-4 h-4 w-4 text-zinc-700 group-hover:text-primary/60 transition-colors" />
                   </Link>
@@ -274,7 +279,7 @@ export default async function StudioHomePage() {
                 <div className="space-y-3">
                   {[
                     { icon: UploadCloud, label: 'Upload a video', href: '/studio/upload', done: totalVideos > 0 },
-                    { icon: Wand2,       label: 'Try the TV Studio editor', href: '/studio/upload?mode=editor', done: false },
+                    { icon: Wand2,       label: 'Try the TV Studio editor', href: '/studio/editor', done: false },
                     { icon: Radio,       label: 'Go live for the first time', href: '/studio/go-live', done: false },
                     { icon: GraduationCap, label: 'Create a cooking class', href: '/studio/classes/new', done: false },
                     { icon: DollarSign,  label: 'Set up monetization', href: '/creator/chef-verification', done: !!profile?.is_creator },

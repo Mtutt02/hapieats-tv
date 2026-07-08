@@ -13,6 +13,7 @@ export async function GET() {
     { data: wallet },
     { data: request },
     { data: tokens },
+    { data: profile },
   ] = await Promise.all([
     service
       .from('creator_wallets')
@@ -31,12 +32,25 @@ export async function GET() {
       .select('lifetime_purchased')
       .eq('user_id', user.id)
       .single(),
+    service
+      .from('profiles')
+      .select('is_creator')
+      .eq('id', user.id)
+      .single(),
   ])
 
   const lifetimePurchased = tokens?.lifetime_purchased ?? 0
   const tokensNeeded = Math.max(0, 500 - lifetimePurchased)
+  const isCreator = profile?.is_creator === true
+  const hasCredits = lifetimePurchased > 0
+  const isPremium =
+    wallet?.monetization_status === 'unlocked' || isCreator || lifetimePurchased >= 500
 
   return NextResponse.json({
+    // flat flags consumed by PremiumGate and the Studio editor
+    isPremium,
+    isCreator,
+    hasCredits,
     monetization_status: wallet?.monetization_status ?? 'locked',
     monetization_unlocked_at: wallet?.monetization_unlocked_at ?? null,
     monetization_unlock_reason: wallet?.monetization_unlock_reason ?? null,

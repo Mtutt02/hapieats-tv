@@ -20,7 +20,7 @@ export default function PremiumGate({ feature, description, children }: PremiumG
         const res = await fetch('/api/creator/monetization')
         if (res.ok) {
           const data = await res.json()
-          setIsPremium(data.isCreator || data.hasCredits)
+          setIsPremium(Boolean(data.isPremium ?? (data.isCreator || data.hasCredits)))
         }
       } catch {
         // If API doesn't exist yet, default to not premium
