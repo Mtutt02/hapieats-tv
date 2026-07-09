@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  poweredByHeader: false,
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -33,7 +34,24 @@ const nextConfig = {
     return config
   },
   async headers() {
-    return [{ source: '/api/mux/webhook', headers: [{ key: 'Content-Type', value: 'application/json' }] }]
+    return [
+      { source: '/api/mux/webhook', headers: [{ key: 'Content-Type', value: 'application/json' }] },
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(self), geolocation=(), payment=(self)' },
+        ],
+      },
+    ]
+  },
+  async redirects() {
+    return [
+      { source: '/learn', destination: '/courses', permanent: true },
+    ]
   },
 }
 

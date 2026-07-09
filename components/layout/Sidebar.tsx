@@ -233,6 +233,8 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
             ['/faq',              'FAQ'       ],
             ['/terms',            'Terms'     ],
             ['/privacy',          'Privacy'   ],
+            ['/cookies',          'Cookies'   ],
+            ['/dmca',             'DMCA'      ],
             ['/guidelines',       'Guidelines'],
             ['/creator-agreement','Creators'  ],
           ].map(([href, label]) => (
@@ -240,6 +242,13 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
               {label}
             </Link>
           ))}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('he-open-cookie-prefs'))}
+            className="hover:text-muted-foreground transition-colors"
+          >
+            Cookie preferences
+          </button>
         </div>
         <p className="mt-1 text-[10px] text-muted-foreground/30">© 2026 HapiEats TV</p>
       </div>

@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next'
 import { createServiceClient } from '@/lib/supabase/server'
 
-const BASE = 'https://hapieatstv.com'
+const BASE = 'https://www.hapieatstv.com'
 
 // Static public pages
 const STATIC_PAGES: MetadataRoute.Sitemap = [

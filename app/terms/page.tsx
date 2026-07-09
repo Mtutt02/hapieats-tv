@@ -2,118 +2,142 @@ import type { Metadata } from 'next'
 import AppShell from '@/components/layout/AppShell'
 
 export const metadata: Metadata = {
-  title: 'Terms of Service',
-  description: 'HapiEats TV Terms of Service — the rules and guidelines governing your use of our platform.',
+  title: 'Terms & Conditions',
+  description: 'HapiEats TV Terms & Conditions — the rules governing accounts, content, Hapi Tokens, subscriptions, creator payouts, and use of our platform.',
 }
 
 export default function TermsPage() {
   return (
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
-        <h1 className="text-3xl font-bold mb-2">Terms of Service</h1>
-        <p className="text-muted-foreground mb-10">Effective date: June 2026</p>
+        <h1 className="text-3xl font-bold mb-2">Terms &amp; Conditions</h1>
+        <p className="text-muted-foreground mb-10">Last updated: July 8, 2026</p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-muted-foreground leading-relaxed">
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">1. Acceptance of Terms</h2>
-            <p>By accessing or using HapiEats TV ("Platform", "we", "our"), you agree to be bound by these Terms of Service and all applicable laws. If you do not agree, you may not use the Platform. These Terms constitute a legally binding agreement between you and HapiEats TV.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">1. Agreement to These Terms</h2>
+            <p>These Terms &amp; Conditions ("Terms") are a binding agreement between you and [HapiEats TV, LLC — update with your registered legal entity and address] ("HapiEats TV", "we", "us", "our"), the operator of the HapiEats TV platform at hapieatstv.com, including video uploads, live streaming, live chat, the TV browser, Hapi Tokens, gifting, subscriptions, cooking classes and courses, and the HapiEats Studio editing tools (collectively, the "Platform"). By creating an account or using the Platform you accept these Terms. If you do not agree, do not use the Platform.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">2. Eligibility</h2>
-            <p>You must be at least 13 years of age to use HapiEats TV. If you are under 18, you represent that a parent or legal guardian has reviewed and agreed to these Terms on your behalf. By using the Platform you represent that you have the legal capacity to enter this agreement.</p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">3. Accounts and Registration</h2>
-            <p>You are responsible for maintaining the confidentiality of your account credentials and for all activity that occurs under your account. You must provide accurate, current, and complete information during registration. You may not share your account or create accounts for others without permission. HapiEats TV reserves the right to suspend or terminate accounts at its discretion.</p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">4. Content Policy</h2>
-            <p>You may not upload, post, or transmit content that:</p>
-            <ul className="list-disc pl-6 mt-2 space-y-1">
-              <li>Is illegal under applicable law</li>
-              <li>Contains nudity, sexual content, or graphic violence</li>
-              <li>Constitutes hate speech, harassment, or targeted abuse</li>
-              <li>Infringes on copyrights, trademarks, or other intellectual property rights</li>
-              <li>Is deceptive, misleading, or constitutes spam</li>
-              <li>Promotes dangerous activities or substances</li>
-              <li>Contains malware, viruses, or other harmful code</li>
-              <li>Impersonates any person or entity</li>
-            </ul>
-            <p className="mt-2">Food-related content must be genuine and not misleadingly edited. HapiEats TV reserves the right to remove any content and suspend accounts that violate this policy, without notice.</p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">5. Creator Monetization</h2>
-            <p>Creators who monetize content agree to the following:</p>
-            <ul className="list-disc pl-6 mt-2 space-y-1">
-              <li>HapiEats TV retains a <strong>20% platform fee</strong> on all subscription revenue and pay-per-view purchases.</li>
-              <li>Creators receive <strong>80%</strong> of subscription and PPV revenue, paid via Stripe Connect.</li>
-              <li>Token gifts: creators receive <strong>70%</strong> of the token face value of gifts received; HapiEats TV retains 30%.</li>
-              <li>Creators are responsible for accurately pricing their content and delivering the promised value to subscribers.</li>
-              <li>Creators are solely responsible for their tax obligations. HapiEats TV does not withhold taxes on creator earnings.</li>
-              <li>Creators must comply with Stripe's Terms of Service to receive payouts.</li>
-              <li>HapiEats TV may suspend monetization for accounts that violate content policies.</li>
+            <h2 className="text-lg font-semibold text-foreground mb-2">2. Eligibility and Age Requirements</h2>
+            <ul className="list-disc pl-6 space-y-1">
+              <li>You must be at least <strong className="text-foreground">13 years old</strong> to create an account or use the Platform.</li>
+              <li>If you are under 18 (or the age of majority where you live), you may only use the Platform with the consent of a parent or legal guardian who has reviewed and agreed to these Terms on your behalf.</li>
+              <li>You must be at least <strong className="text-foreground">18 years old</strong> to purchase Hapi Tokens, buy a subscription, enroll in paid classes, or register as a creator who receives payouts. Creator payouts additionally require completing Stripe Connect onboarding, including identity verification.</li>
+              <li>You may not use the Platform if you have previously been banned, or if doing so would violate any law that applies to you.</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">6. Tokens and Virtual Currency</h2>
-            <p>HapiEats Tokens are virtual items with no monetary value outside the Platform. Tokens may be used to send gifts to creators during live streams. Tokens are non-refundable, non-transferable, and have no cash value. Unused tokens may be forfeited if your account is terminated for policy violations. HapiEats TV reserves the right to modify token pricing and the gift catalog at any time.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">3. Accounts</h2>
+            <p>You must provide accurate registration information and keep it current. You are responsible for safeguarding your credentials and for all activity under your account, including token spending, gifts sent in live chat, and content published from your account. Notify us immediately at <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a> if you suspect unauthorized access. One person per account; you may not sell, transfer, or share accounts, or impersonate another person or brand.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">7. Subscriptions and Payments</h2>
-            <p>Platform and creator subscriptions are billed monthly and will automatically renew until cancelled. You may cancel a subscription at any time; cancellation takes effect at the end of the current billing period. Refunds are issued at HapiEats TV's discretion and only for technical failures where content could not be delivered. All payments are processed securely by Stripe.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">4. Your Content and License to Us</h2>
+            <p>"Content" means anything you upload or transmit through the Platform — videos, live streams, live chat messages, recipes, recipe cards, comments, thumbnails, class materials, and profile information. You retain ownership of your Content. By posting Content you grant HapiEats TV a worldwide, non-exclusive, royalty-free, sublicensable license to host, store, transcode, encode, cache, reproduce, stream, display, distribute, create clips and thumbnails from, and promote your Content on and in connection with the Platform (including transcoding and delivery through our video provider, Mux, and display within the TV browser and channel guide). This license ends when you delete the Content or your account, except (a) where Content has been reshared or gifted-on within the Platform, (b) for server backups kept for a limited period, and (c) where retention is required by law.</p>
+            <p className="mt-2">You represent that you own or have secured all rights needed for your Content — including music, footage, imagery, recipes reproduced verbatim from protected works, trademarks, and the appearance of any identifiable people — and that your Content does not violate Section 5.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">8. Intellectual Property</h2>
-            <p>You retain all ownership rights to content you upload. By uploading content to HapiEats TV, you grant us a worldwide, non-exclusive, royalty-free license to host, store, reproduce, display, stream, and distribute your content on the Platform and in promotional materials. You confirm that you hold all necessary rights to the content you upload, including rights to any music, trademarks, or third-party material included.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">5. Prohibited Content and Conduct</h2>
+            <p>You may not upload, stream, or transmit Content that:</p>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li>Is illegal, or promotes illegal activity</li>
+              <li>Contains nudity, sexually explicit material, or graphic violence</li>
+              <li>Constitutes hate speech, harassment, bullying, or targeted abuse (including in live chat)</li>
+              <li>Infringes copyright, trademark, or other intellectual property rights (see our <a href="/dmca" className="text-primary hover:underline">DMCA / Copyright Policy</a>)</li>
+              <li>Presents unsafe food-handling, consumption challenges, or preparation practices as safe, or makes false or misleading health, nutrition, or allergen claims</li>
+              <li>Is deceptive, spam, engagement manipulation, or artificially inflated metrics (including self-gifting schemes designed to launder token value)</li>
+              <li>Contains malware or attempts to interfere with the Platform, other users' streams, or our infrastructure</li>
+              <li>Discloses another person's private information without consent</li>
+            </ul>
+            <p className="mt-2">You also may not scrape the Platform, circumvent playback restrictions, resell access, restream others' live streams, or reverse-engineer our services. We use a combination of automated (AI-assisted) and human moderation and may remove Content, restrict features (including chat, gifting, and streaming), or suspend accounts at our discretion, with or without notice.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">9. DMCA / Copyright</h2>
-            <p>HapiEats TV respects intellectual property rights and complies with the Digital Millennium Copyright Act (DMCA). If you believe your copyrighted work has been infringed, send a notice to <a href="mailto:dmca@hapieatstv.com" className="text-primary hover:underline">dmca@hapieatstv.com</a> including: identification of the copyrighted work, the infringing material and its location, your contact information, a statement of good faith belief, and your signature. Repeat infringers will have their accounts terminated.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">6. Hapi Tokens and Virtual Gifts</h2>
+            <p>Hapi Tokens are a limited, revocable, non-transferable license to access features within the Platform — chiefly sending virtual gifts to creators during live streams and videos. <strong className="text-foreground">Hapi Tokens are not money, are not a substitute for money, have no cash value, and are not redeemable by viewers for cash or any monetary value.</strong> Additionally:</p>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li>Token purchases are final. <strong className="text-foreground">All token purchases are non-refundable except where a refund is required by applicable law</strong> (for example, certain consumer-protection or withdrawal rights in your jurisdiction).</li>
+              <li>Tokens cannot be transferred between accounts, sold, exchanged outside the Platform, or inherited.</li>
+              <li>Gift prices are set by the gift catalog in our systems; the price recorded by our servers at the moment of sending is authoritative.</li>
+              <li>Sent gifts are final once delivered; the corresponding token debit will not be reversed except in cases of verified technical failure or fraud, at our discretion.</li>
+              <li>We may change token pricing, gift catalog contents, and gift values at any time; changes do not apply retroactively to completed transactions.</li>
+              <li>Unused tokens may be forfeited without compensation if your account is terminated for violating these Terms, or upon lawful discontinuation of the token program with reasonable advance notice where required by law.</li>
+            </ul>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">10. Privacy</h2>
-            <p>Your use of HapiEats TV is also governed by our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>, which is incorporated into these Terms by reference.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">7. Subscriptions, Classes, and Billing</h2>
+            <ul className="list-disc pl-6 space-y-1">
+              <li><strong className="text-foreground">Recurring billing:</strong> Platform subscriptions, creator channel subscriptions, and Studio Pro (Section 9) renew automatically each billing period until cancelled. All payments are processed by Stripe; we never see or store your full card details.</li>
+              <li><strong className="text-foreground">Cancellation:</strong> You may cancel any subscription at any time from your account settings or the Stripe billing portal. Cancellation takes effect at the end of the current billing period; you keep access until then. We do not provide prorated refunds for partial periods except where required by law.</li>
+              <li><strong className="text-foreground">Price changes:</strong> We will give you advance notice of subscription price changes; they apply from your next renewal after notice.</li>
+              <li><strong className="text-foreground">Cooking classes and courses:</strong> One-time class or course purchases grant a personal, non-transferable license to view the class materials on the Platform. If a scheduled live class is cancelled by the creator or by us and not rescheduled, you will receive a refund or equivalent credit.</li>
+              <li><strong className="text-foreground">Failed payments:</strong> If a renewal payment fails, we may retry it and suspend paid features until payment succeeds.</li>
+            </ul>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">11. Limitation of Liability</h2>
-            <p>HapiEats TV is provided "as is" without warranties of any kind, either express or implied. To the maximum extent permitted by law, HapiEats TV and its officers, directors, employees, and agents shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or goodwill, arising from your use of the Platform. Our total liability to you for any claims shall not exceed the greater of $100 or the amount you paid to HapiEats TV in the 12 months preceding the claim.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">8. Creator Earnings, Payouts, and Taxes</h2>
+            <ul className="list-disc pl-6 space-y-1">
+              <li>Creators must be 18+ and complete Stripe Connect onboarding (including identity and, where applicable, tax-form collection) before receiving any payout.</li>
+              <li>HapiEats TV retains a <strong className="text-foreground">20% platform fee</strong> on subscription and class/course revenue; creators receive 80%. For token gifts, creators receive <strong className="text-foreground">70%</strong> of the gift's recorded value and HapiEats TV retains 30%. Fee schedules may change with advance notice and apply prospectively only.</li>
+              <li>Earnings accrue to your creator wallet and are paid out via Stripe Connect on the schedule and above the minimum threshold shown in Creator Studio. Stripe's own terms and payout timing apply.</li>
+              <li>We may withhold, offset, or claw back earnings connected to fraud, refunded or disputed payments, self-gifting, chargebacks, or Terms violations, and may suspend monetization while we investigate.</li>
+              <li><strong className="text-foreground">Taxes:</strong> Creators are independent contractors, not employees, agents, or partners of HapiEats TV. You are solely responsible for reporting and paying all taxes on your earnings. We (or Stripe) may issue tax documents such as Form 1099 where legally required.</li>
+            </ul>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">12. Indemnification</h2>
-            <p>You agree to indemnify and hold harmless HapiEats TV and its affiliates from any claims, damages, losses, liabilities, costs, and expenses (including attorneys' fees) arising from: your violation of these Terms; your content; your use of the Platform; or your violation of any third party's rights.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">9. Studio and Studio Pro</h2>
+            <p>The Platform includes an AI-assisted video editor ("Studio"). The paid <strong className="text-foreground">Studio Pro</strong> tier unlocks additional features (such as advanced AI editing tools, higher processing limits, and priority rendering) as described on the Studio Pro purchase page. Studio Pro is a recurring subscription governed by Section 7. Feature sets may evolve; if we materially reduce Studio Pro functionality mid-period, you may contact us for a prorated remedy. Content you create with Studio remains your Content under Section 4, and you are responsible for it — including AI-assisted output you choose to publish.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">13. Termination</h2>
-            <p>We may suspend or terminate your account at any time for violations of these Terms, with or without notice. You may delete your account at any time via Account Settings. Upon termination, your access to the Platform ceases immediately. Provisions that by their nature should survive termination (including IP rights, disclaimers, and limitations of liability) will survive.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">10. AI Features Disclaimer</h2>
+            <p>The Platform uses artificial intelligence for content moderation, recommendations, and Studio editing assistance. AI systems can make mistakes: moderation may occasionally flag compliant content or miss violating content, and AI-generated edits, captions, titles, or suggestions may be inaccurate or unsuitable. You are responsible for reviewing AI-assisted output before publishing. Moderation decisions may be appealed by contacting <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>. Recipe, nutrition, and food-safety information on the Platform — whether human- or AI-generated — is provided for general information only and is not professional dietary, allergy, or medical advice; always verify allergen and food-safety information independently.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">14. Governing Law & Dispute Resolution</h2>
-            <p>These Terms are governed by the laws of the State of [Your State], without regard to its conflict of law provisions. Any disputes shall be resolved by binding arbitration under the AAA Consumer Arbitration Rules, except that either party may seek injunctive relief in a court of competent jurisdiction. You waive any right to a jury trial or class action proceeding.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">11. Intellectual Property and DMCA</h2>
+            <p>The Platform itself — including software, design, the TV browser experience, logos, and trademarks — belongs to HapiEats TV and its licensors and may not be copied or used without permission. We respond to copyright infringement notices under the Digital Millennium Copyright Act and terminate repeat infringers. See our <a href="/dmca" className="text-primary hover:underline">DMCA / Copyright Policy</a> for how to submit a notice or counter-notice.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">15. Changes to Terms</h2>
-            <p>We may update these Terms at any time. We will notify you of material changes via email or a prominent notice on the Platform. Your continued use after notice constitutes acceptance of the revised Terms.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">12. Termination</h2>
+            <p>You may stop using the Platform and delete your account at any time in Settings. We may suspend or terminate your account, remove Content, or restrict features at any time for violation of these Terms, legal risk, fraud, extended inactivity, or discontinuation of the Platform — with notice where practicable and required. On termination: your license to use the Platform ends; unused tokens are handled per Section 6; accrued, legitimate creator earnings above the payout minimum will be paid out unless withheld under Section 8; and Sections 4 (surviving license terms), 6, 8, 13, 14, and 15 survive.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-foreground mb-2">16. Contact</h2>
-            <p>Questions about these Terms? Contact us at <a href="mailto:legal@hapieatstv.com" className="text-primary hover:underline">legal@hapieatstv.com</a>.</p>
+            <h2 className="text-lg font-semibold text-foreground mb-2">13. Disclaimers</h2>
+            <p>THE PLATFORM IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. We do not warrant uninterrupted or error-free operation, that live streams will be free of interruption or latency, that any level of creator earnings will be achieved, or that Content (including recipes and cooking techniques) is accurate or safe. You follow recipes, cooking techniques, and food-handling guidance shown on the Platform at your own risk.</p>
           </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">14. Limitation of Liability and Indemnification</h2>
+            <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, HAPIEATS TV AND ITS OFFICERS, DIRECTORS, EMPLOYEES, AND AGENTS WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR LOSS OF PROFITS, DATA, GOODWILL, OR TOKEN VALUE, ARISING FROM YOUR USE OF THE PLATFORM. OUR TOTAL AGGREGATE LIABILITY FOR ALL CLAIMS IS LIMITED TO THE GREATER OF (A) US$100 OR (B) THE AMOUNTS YOU PAID US IN THE 12 MONTHS BEFORE THE CLAIM. Some jurisdictions do not allow certain limitations, so parts of this section may not apply to you. You agree to indemnify HapiEats TV against claims arising from your Content, your use of the Platform, or your violation of these Terms or third-party rights.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">15. Governing Law and Disputes</h2>
+            <p>These Terms are governed by the laws of [insert governing state/country — update with your registered legal entity's jurisdiction], without regard to conflict-of-law rules. Disputes will be resolved in the courts of, or by binding arbitration seated in, that jurisdiction, as determined by [HapiEats TV, LLC — update with your registered legal entity and address]. Nothing in this section limits any non-waivable consumer rights you hold under the mandatory laws of your country of residence.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">16. Changes to These Terms</h2>
+            <p>We may update these Terms from time to time. For material changes we will give notice by email or a prominent notice on the Platform at least 14 days before they take effect (except changes required immediately by law or for security). Continued use of the Platform after the effective date constitutes acceptance. If you do not agree, stop using the Platform and cancel any subscriptions before the changes take effect.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">17. Contact</h2>
+            <p>Questions about these Terms? Contact <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a> or write to [HapiEats TV, LLC — update with your registered legal entity and address]. See also our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>, <a href="/cookies" className="text-primary hover:underline">Cookie Policy</a>, and <a href="/dmca" className="text-primary hover:underline">DMCA / Copyright Policy</a>, each incorporated into these Terms by reference.</p>
+          </section>
+
+          <p className="italic text-sm">This document is a template and should be reviewed by qualified legal counsel before relying on it.</p>
 
         </div>
       </main>

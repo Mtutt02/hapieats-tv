@@ -1,5 +1,17 @@
 import { NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+
+async function requireAdmin(): Promise<boolean> {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return false
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+  return !!profile && ['admin', 'superadmin'].includes(profile.role ?? '')
+}
 
 // Seed sample content with real-looking videos.
 // GET  /api/admin/seed-content — returns status of existing content
@@ -69,6 +81,7 @@ const SEED_VIDEOS = [
 ]
 
 export async function GET() {
+  if (!(await requireAdmin())) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const supabase = createServiceClient()
   const { data: existing } = await supabase
     .from('videos')
@@ -83,6 +96,7 @@ export async function GET() {
 }
 
 export async function POST() {
+  if (!(await requireAdmin())) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const supabase = createServiceClient()
 
   // Get or create the HapiEats Kitchen channel

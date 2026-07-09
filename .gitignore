@@ -46,3 +46,11 @@ GIT_AUTH_USER.txt
 PUSH_OUTPUT.txt
 VERCEL_OUTPUT.txt
 .env*
+
+# secret-bearing local helper files
+deploy.bat
+deploy-ps.ps1
+set-mux-webhook-secret.ps1
+VERCEL_ENV_VARS.txt
+add-mux-mcp.bat
+DEPLOY_NOW.vbs

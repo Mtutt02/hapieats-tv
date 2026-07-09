@@ -66,12 +66,12 @@ export default async function HomePage() {
       <Script
         id="org-schema"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema).replace(/</g, '\\u003c') }}
       />
       <Script
         id="website-schema"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteSchema) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteSchema).replace(/</g, '\\u003c') }}
       />
       <HomeClient
         dbVideos={(dbVideos as Video[]) ?? []}

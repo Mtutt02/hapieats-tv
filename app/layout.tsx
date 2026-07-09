@@ -5,6 +5,8 @@ import { Toaster } from '@/components/ui/toaster'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import GlobalUploadToast from '@/components/upload/GlobalUploadToast'
+import CookieConsent from '@/components/CookieConsent'
+import ConsentGate from '@/components/ConsentGate'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -16,11 +18,11 @@ export const viewport: Viewport = {
   viewportFit: 'cover', // respect iPhone notch safe areas
 }
 
-const BASE_URL = 'https://hapieatstv.com'
+// Canonical host is www — the apex 308-redirects to it
+const BASE_URL = 'https://www.hapieatstv.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
-  icons: { icon: '/favicon.svg', shortcut: '/favicon.svg', apple: '/favicon.svg' },
   title: { default: 'HapiEats TV', template: '%s | HapiEats TV' },
   description: 'Watch and support food creators on HapiEats TV. Free and premium food videos, live streams, cooking classes, and recipes — all in one place.',
   keywords: [
@@ -37,13 +39,13 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
-  alternates: { canonical: BASE_URL },
+  // NOTE: no site-wide canonical/og:url — each page resolves its own against
+  // metadataBase, so /tv, /faq, etc. no longer all claim the homepage.
   openGraph: {
     siteName: 'HapiEats TV',
     title: 'HapiEats TV — Good Food. Real People. Real Stories.',
     description: 'Watch food creators, catch live streams, and take cooking classes. Free and premium content from real food people.',
     type: 'website',
-    url: BASE_URL,
     locale: 'en_US',
     // opengraph-image.tsx auto-generates the OG image
   },
@@ -74,8 +76,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <GlobalUploadToast />
         <Toaster />
-        <Analytics />
-        <SpeedInsights />
+        <ConsentGate>
+          <Analytics />
+          <SpeedInsights />
+        </ConsentGate>
+        <CookieConsent />
       </body>
     </html>
   )

@@ -90,6 +90,12 @@ export default function RegisterPage() {
             <Button type="submit" className="w-full mt-2" disabled={loading}>
               {loading ? 'Creating account…' : 'Create account'}
             </Button>
+            <p className="text-xs text-muted-foreground text-center mt-3">
+              By signing up you agree to our{' '}
+              <Link href="/terms" className="text-primary hover:underline">Terms</Link> and{' '}
+              <Link href="/privacy" className="text-primary hover:underline">Privacy Policy</Link>
+              , and confirm you are 13 or older.
+            </p>
           </form>
         </div>
 
