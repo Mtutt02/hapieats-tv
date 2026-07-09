@@ -161,7 +161,7 @@ export default function CookieConsent() {
       role="dialog"
       aria-label="Cookie consent"
       aria-live="polite"
-      className="fixed inset-x-0 bottom-0 z-[100] p-3 sm:p-4"
+      className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-[100] p-3 sm:p-4 md:bottom-0"
     >
       <div className="mx-auto max-w-3xl rounded-xl border border-zinc-800 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur sm:p-5">
         <h2 className="text-sm font-semibold text-zinc-100">We use cookies</h2>

@@ -194,6 +194,9 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
       const settled = await waitForUploadSettled()
       if (settled === 'error') break
     }
+
+    // All files pushed — show the success screen (Mux keeps processing in background)
+    if (useUploadStore.getState().status !== 'error') setStep('done')
   }
 
   // ─── Upload/Processing/Done screens ──────────────────────────────────

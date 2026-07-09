@@ -15,6 +15,11 @@ export async function POST(req: NextRequest) {
     if (!gift_id || !recipient_id) {
       return NextResponse.json({ error: 'gift_id and recipient_id required' }, { status: 400 })
     }
+    // SECURITY: quantity must be a small positive integer — a negative value
+    // would flip the debit into a credit (token minting).
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
+      return NextResponse.json({ error: 'quantity must be an integer between 1 and 10' }, { status: 400 })
+    }
     if (user.id === recipient_id) {
       return NextResponse.json({ error: 'Cannot send gifts to yourself' }, { status: 400 })
     }
