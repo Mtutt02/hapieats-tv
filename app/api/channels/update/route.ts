@@ -17,6 +17,7 @@ export async function PATCH(req: NextRequest) {
     name?: string
     description?: string | null
     subscription_price?: number | null
+    open_posting?: boolean
   }
 
   try {
@@ -53,6 +54,16 @@ export async function PATCH(req: NextRequest) {
 
   if (body.description !== undefined) {
     updates.description = body.description || null
+  }
+
+  if (body.open_posting !== undefined) {
+    if (typeof body.open_posting !== 'boolean') {
+      return NextResponse.json(
+        { error: 'open_posting must be a boolean.' },
+        { status: 400 }
+      )
+    }
+    updates.open_posting = body.open_posting
   }
 
   // Handle subscription price changes

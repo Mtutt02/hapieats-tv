@@ -26,7 +26,7 @@ export default function ClipsGrid({ clips }: ClipsGridProps) {
         <Link
           key={clip.id}
           href={`/clips/${clip.id}`}
-          className="group relative aspect-[9/16] overflow-hidden rounded-xl border bg-card"
+          className="group relative aspect-[9/16] overflow-hidden rounded-xl border bg-black"
         >
           {clip.mux_playback_id ? (
             <Image
@@ -34,7 +34,7 @@ export default function ClipsGrid({ clips }: ClipsGridProps) {
               alt={clip.title ?? 'Clip'}
               fill
               sizes="(max-width: 640px) 50vw, 33vw"
-              className="object-cover transition-transform duration-200 group-hover:scale-105"
+              className="object-contain transition-transform duration-200 group-hover:scale-105"
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center bg-muted">

@@ -104,33 +104,51 @@ export async function deductCredits(opts: {
 
   const serviceClient = createServiceClient()
 
-  // Fetch current balance (lock via upsert pattern below)
-  const { data: row, error: fetchErr } = await serviceClient
-    .from('app_credits')
-    .select('gift_balance, loan_balance, loan_repaid')
-    .eq('user_id', userId)
-    .single()
+  // Optimistic-lock loop: the UPDATE only applies if gift_balance and
+  // loan_balance still equal what we read. If a concurrent deduction changed
+  // them (0 rows matched), retry once with a fresh read, then fail.
+  let newGift = 0
+  let newLoan = 0
+  let applied = false
 
-  if (fetchErr || !row) throw new Error('No credit balance found for user')
+  for (let attempt = 0; attempt < 2 && !applied; attempt++) {
+    // Fetch current balance
+    const { data: row, error: fetchErr } = await serviceClient
+      .from('app_credits')
+      .select('gift_balance, loan_balance, loan_repaid')
+      .eq('user_id', userId)
+      .single()
 
-  const currentGift = parseFloat(row.gift_balance)
-  const currentLoan = parseFloat(row.loan_balance)
-  const currentRepaid = parseFloat(row.loan_repaid)
+    if (fetchErr || !row) throw new Error('No credit balance found for user')
 
-  if (currentGift < giftUsed || currentLoan < loanUsed) {
-    throw new Error('Insufficient credits')
+    const currentGift = parseFloat(row.gift_balance)
+    const currentLoan = parseFloat(row.loan_balance)
+
+    if (currentGift < giftUsed || currentLoan < loanUsed) {
+      throw new Error('Insufficient credits')
+    }
+
+    newGift = round2(currentGift - giftUsed)
+    newLoan = round2(currentLoan - loanUsed)
+
+    // Conditional update: match only if the balances we read are still current
+    const { data: updatedRows, error: updateErr } = await serviceClient
+      .from('app_credits')
+      .update({ gift_balance: newGift, loan_balance: newLoan })
+      .eq('user_id', userId)
+      .eq('gift_balance', row.gift_balance)
+      .eq('loan_balance', row.loan_balance)
+      .select('user_id')
+
+    if (updateErr) throw new Error(`Failed to deduct credits: ${updateErr.message}`)
+
+    if (updatedRows && updatedRows.length > 0) {
+      applied = true
+    }
+    // 0 rows matched → balance changed concurrently → loop retries once
   }
 
-  const newGift = round2(currentGift - giftUsed)
-  const newLoan = round2(currentLoan - loanUsed)
-
-  // Update balances
-  const { error: updateErr } = await serviceClient
-    .from('app_credits')
-    .update({ gift_balance: newGift, loan_balance: newLoan })
-    .eq('user_id', userId)
-
-  if (updateErr) throw new Error(`Failed to deduct credits: ${updateErr.message}`)
+  if (!applied) throw new Error('Balance changed, try again')
 
   // Write ledger entries
   const entries: Array<{

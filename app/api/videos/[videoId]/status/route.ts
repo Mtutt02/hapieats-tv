@@ -74,7 +74,7 @@ export async function GET(
       if (asset.status === 'ready') {
         const playbackId = asset.playback_ids?.[0]?.id ?? null
         const thumb      = playbackId
-          ? `https://image.mux.com/${playbackId}/thumbnail.jpg`
+          ? `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&fit_mode=preserve`
           : null
 
         await service

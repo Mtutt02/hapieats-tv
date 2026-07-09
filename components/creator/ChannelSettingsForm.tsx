@@ -30,6 +30,7 @@ const schema = z.object({
       },
       { message: 'Subscription price must be at least $0.99' }
     ),
+  open_posting: z.boolean().optional(),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -54,6 +55,7 @@ export default function ChannelSettingsForm({ channel }: ChannelSettingsFormProp
       subscription_price: channel.subscription_price != null
         ? String(channel.subscription_price)
         : '',
+      open_posting: (channel as Channel & { open_posting?: boolean }).open_posting ?? false,
     },
   })
 
@@ -64,6 +66,7 @@ export default function ChannelSettingsForm({ channel }: ChannelSettingsFormProp
     const payload: Record<string, unknown> = {
       name: values.name,
       description: values.description || null,
+      open_posting: values.open_posting ?? false,
     }
 
     if (values.subscription_price && values.subscription_price.trim() !== '') {
@@ -145,6 +148,23 @@ export default function ChannelSettingsForm({ channel }: ChannelSettingsFormProp
         {errors.subscription_price && (
           <p className="text-sm text-destructive">{errors.subscription_price.message}</p>
         )}
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-start gap-2.5">
+          <input
+            id="open_posting"
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-input accent-primary cursor-pointer"
+            {...register('open_posting')}
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="open_posting" className="cursor-pointer">Community posting</Label>
+            <p className="text-xs text-muted-foreground">
+              Let other creators post videos to this channel.
+            </p>
+          </div>
+        </div>
       </div>
 
       {status === 'success' && (

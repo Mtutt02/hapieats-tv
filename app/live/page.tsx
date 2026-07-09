@@ -43,7 +43,7 @@ export default async function LiveBrowsePage() {
                 <div className="aspect-video bg-muted relative flex items-center justify-center">
                   {(s as any).mux_playback_id ? (
                     <img
-                      src={`https://image.mux.com/${(s as any).mux_playback_id}/thumbnail.jpg`}
+                      src={`https://image.mux.com/${(s as any).mux_playback_id}/thumbnail.jpg?width=640&fit_mode=preserve`}
                       alt={s.title}
                       className="w-full h-full object-cover"
                     />

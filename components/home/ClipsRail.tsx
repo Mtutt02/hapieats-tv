@@ -59,14 +59,14 @@ export default function ClipsRail({ feed = 'trending', skip = 0, title = 'Trendi
           <Link
             key={clip.id}
             href={`/clips/${clip.id}`}
-            className="group relative flex-shrink-0 w-32 sm:w-40 aspect-[9/16] rounded-xl overflow-hidden bg-muted snap-start"
+            className="group relative flex-shrink-0 w-32 sm:w-40 aspect-[9/16] rounded-xl overflow-hidden bg-black snap-start"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={clipThumbnail(clip.mux_playback_id)}
               alt={clip.title}
               loading="lazy"
-              className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              className="absolute inset-0 h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
             />
             <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 p-2">

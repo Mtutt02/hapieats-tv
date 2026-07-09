@@ -19,7 +19,7 @@ export async function getSignedPlaybackToken(playbackId: string, type: 'video' |
 
 /** Get the thumbnail URL for a Mux asset */
 export function getThumbnailUrl(playbackId: string, time = 0) {
-  return `https://image.mux.com/${playbackId}/thumbnail.jpg?time=${time}`
+  return `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&fit_mode=preserve&time=${time}`
 }
 
 /** Get the animated GIF preview URL */

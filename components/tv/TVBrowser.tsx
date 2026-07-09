@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronUp, PictureInPicture2 } from 'lucide-react'
+import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronDown, Gamepad2, PictureInPicture2 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface TVChannel {
@@ -239,7 +239,7 @@ function PhysicalRemote({
 
   return (
     <div
-      className="bg-[#0c0c0c] rounded-t-[28px] border border-zinc-800/80 border-b-0"
+      className="bg-[#0c0c0c] rounded-[28px] border border-zinc-800/80"
       style={{ background: 'linear-gradient(175deg, #141414 0%, #080808 100%)' }}
     >
       {/* Grip handle */}
@@ -381,46 +381,42 @@ function FloatingRemote(props: RemoteProps & { open: boolean; onToggle: () => vo
   const { open, onToggle, ...remoteProps } = props
   return (
     <div
-      className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center"
-      style={{ width: 210 }}
+      className={cn(
+        'fixed z-50 flex flex-col items-end',
+        // Anchor bottom-right; stay above the mobile bottom nav on small screens
+        'right-4 bottom-[calc(64px+env(safe-area-inset-bottom))]',
+        'md:bottom-[calc(1rem+env(safe-area-inset-bottom))]',
+        'w-[210px] max-w-[calc(100vw-2rem)]',
+      )}
     >
-      {/* Remote body — collapses via max-height */}
+      {/* Remote body — collapses via max-height/opacity */}
       <div
         className={cn(
-          'w-full overflow-hidden transition-all duration-300 ease-in-out',
-          open ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0',
+          'w-full overflow-hidden rounded-[28px] transition-all duration-300 ease-in-out',
+          'shadow-[0_12px_40px_rgba(0,0,0,0.6)]',
+          open ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none',
         )}
       >
         <PhysicalRemote {...remoteProps} />
       </div>
 
-      {/* Toggle handle — always visible */}
+      {/* Corner pill — expands/collapses the remote (R key also toggles) */}
       <button
         onClick={onToggle}
+        aria-label={open ? 'Hide remote' : 'Show remote'}
         className={cn(
-          'w-[175px] flex flex-col items-center gap-0.5 py-2 px-4',
-          'rounded-t-2xl border border-b-0 border-zinc-800 transition-colors duration-150',
-          open ? 'hover:bg-zinc-800/60' : 'hover:bg-zinc-800/80',
+          'flex items-center justify-center rounded-full select-none',
+          'bg-zinc-900 border border-zinc-700/80 text-zinc-300',
+          'shadow-[0_4px_16px_rgba(0,0,0,0.5)]',
+          'transition-all duration-300 ease-in-out',
+          'hover:text-emerald-400 hover:ring-2 hover:ring-emerald-500/60',
+          open ? 'h-9 w-9 mt-2' : 'h-12 w-12',
         )}
-        style={{
-          background: open
-            ? 'linear-gradient(180deg, #161616 0%, #0e0e0e 100%)'
-            : 'linear-gradient(180deg, #222 0%, #161616 100%)',
-          boxShadow: '-6px 0 20px rgba(0,0,0,0.5), 6px 0 20px rgba(0,0,0,0.5)',
-        }}
       >
-        <div className="w-8 h-0.5 rounded-full bg-zinc-700" />
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-[9px] font-black tracking-[0.2em] text-zinc-500 uppercase">
-            {open ? 'Hide' : 'Remote'}
-          </span>
-          <ChevronUp
-            className={cn(
-              'h-2.5 w-2.5 text-zinc-600 transition-transform duration-300',
-              open && 'rotate-180',
-            )}
-          />
-        </div>
+        {open
+          ? <ChevronDown className="h-4 w-4" />
+          : <Gamepad2 className="h-5 w-5" />
+        }
       </button>
     </div>
   )

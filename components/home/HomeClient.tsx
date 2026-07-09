@@ -157,7 +157,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
           </h3>
           <p className="text-muted-foreground text-xs mt-1 font-medium">{video.channelName}</p>
           <p className="text-muted-foreground text-xs">
-            {formatViews(video.viewCount)} views · {formatDistanceToNow(new Date(video.publishedAt), { addSuffix: true })}
+            {formatDistanceToNow(new Date(video.publishedAt), { addSuffix: true })}
           </p>
         </div>
       </div>
@@ -306,7 +306,7 @@ function StationBubble({ station }: { station: typeof SAMPLE_STATIONS[0] }) {
         </div>
       </div>
       <span className="text-[10px] sm:text-[11px] font-semibold text-center leading-tight line-clamp-1 w-full text-center">
-        {station.name.split(' ')[0]}
+        {station.name}
       </span>
     </Link>
   )
@@ -344,7 +344,10 @@ function FeaturedCard({
             {title}
           </h2>
           <p className="text-white/60 text-xs sm:text-sm mt-1.5 font-medium">
-            {channelName} · {typeof views === 'number' ? formatViews(views) : views} views
+            {channelName}
+            {(typeof views !== 'number' || views > 0) && (
+              <> · {typeof views === 'number' ? formatViews(views) : views} views</>
+            )}
           </p>
         </div>
       </div>

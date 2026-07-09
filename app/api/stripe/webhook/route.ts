@@ -30,6 +30,27 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient()
 
+  // ── Idempotency guard ──────────────────────────────────────────────────────
+  // Record the event id in stripe_events. A unique-violation (23505) means
+  // Stripe retried an event we already processed — acknowledge with 200 and
+  // do nothing. Any OTHER insert error (table missing pre-migration, transient
+  // DB issue) must never block processing: log and continue.
+  try {
+    const { error: idempotencyErr } = await supabase
+      .from('stripe_events')
+      .insert({ id: event.id, type: event.type })
+
+    if (idempotencyErr) {
+      if (idempotencyErr.code === '23505') {
+        console.log(`[stripe/webhook] duplicate event ${event.id} (${event.type}) — already processed, skipping`)
+        return NextResponse.json({ received: true, duplicate: true })
+      }
+      console.error('[stripe/webhook] stripe_events insert error (continuing):', idempotencyErr)
+    }
+  } catch (err) {
+    console.error('[stripe/webhook] stripe_events guard threw (continuing):', err)
+  }
+
   switch (event.type) {
     // ── Pay-per-view completed ────────────────────────────────────────────────
     case 'checkout.session.completed': {
@@ -331,6 +352,76 @@ export async function POST(req: NextRequest) {
         await supabase.from('subscriptions')
           .update({ status: 'past_due' })
           .eq('stripe_subscription_id', invoice.subscription as string)
+      }
+      break
+    }
+
+    // ── Refund / chargeback — claw back token credits ─────────────────────────
+    // Token purchases record the Stripe session in token_ledger metadata
+    // (stripe_session_id, set in the token_purchase branch above). We map
+    // charge → payment_intent → checkout session, read the session metadata
+    // that the checkout flow stored (checkoutMode, userId, tokenAmount), and
+    // reverse the credit via record_token_movement. If the original purchase
+    // can't be located we log and still return 200 — never 500 to Stripe.
+    case 'charge.refunded':
+    case 'charge.dispute.created': {
+      try {
+        const isDispute = event.type === 'charge.dispute.created'
+        const reason = isDispute ? 'chargeback' : 'refund'
+
+        const paymentIntentId = isDispute
+          ? ((event.data.object as Stripe.Dispute).payment_intent as string | null)
+          : ((event.data.object as Stripe.Charge).payment_intent as string | null)
+
+        if (!paymentIntentId) {
+          console.error(`[stripe/webhook] ${event.type}: no payment_intent on event ${event.id} — skipping`)
+          break
+        }
+
+        // Locate the original checkout session for this payment intent
+        const sessions = await stripe.checkout.sessions.list({
+          payment_intent: paymentIntentId,
+          limit: 1,
+        })
+        const session = sessions.data[0]
+
+        if (!session) {
+          console.error(`[stripe/webhook] ${event.type}: no checkout session for payment_intent ${paymentIntentId} — skipping`)
+          break
+        }
+
+        const { userId, checkoutMode } = session.metadata ?? {}
+
+        if (checkoutMode === 'token_purchase' && userId) {
+          const tokenAmount = parseInt(session.metadata?.tokenAmount ?? '0', 10)
+          if (tokenAmount > 0) {
+            // Negative movement reverses the purchase credit. token_ledger's
+            // type CHECK only allows 'refund' — the chargeback distinction is
+            // preserved in the description + metadata.reason.
+            const { error: reverseErr } = await supabase.rpc('record_token_movement', {
+              p_user_id: userId,
+              p_type: 'refund',
+              p_amount: -tokenAmount,
+              p_description: `Reversed ${tokenAmount} Hapi Tokens (${reason})`,
+              p_metadata: {
+                reason,
+                stripe_event_id: event.id,
+                stripe_session_id: session.id,
+                stripe_payment_intent_id: paymentIntentId,
+              },
+            })
+            if (reverseErr) {
+              console.error(`[stripe/webhook] ${event.type}: token reversal failed for user ${userId}:`, reverseErr)
+            } else {
+              console.log(`[stripe/webhook] ${event.type}: reversed ${tokenAmount} tokens for user ${userId} (${reason})`)
+            }
+          }
+        } else {
+          console.log(`[stripe/webhook] ${event.type}: session ${session.id} is checkoutMode=${checkoutMode ?? 'unknown'} — no token reversal applicable`)
+        }
+      } catch (err) {
+        // Never bubble a 500 back to Stripe for refund/dispute handling
+        console.error(`[stripe/webhook] ${event.type} handler error (returning 200):`, err)
       }
       break
     }

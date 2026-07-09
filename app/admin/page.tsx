@@ -111,7 +111,7 @@ export default async function AdminDashboard() {
             {(recentVideos ?? []).map(v => {
               const vid = v as any
               const thumb = vid.mux_playback_id
-                ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=120&time=0`
+                ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=120&fit_mode=preserve&time=0`
                 : null
               return (
                 <div key={vid.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20 transition-colors">

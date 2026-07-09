@@ -313,7 +313,7 @@ export default async function WatchPage({ params }: PageProps) {
     name: video.title,
     description: (video.description as string | null) ?? `Watch ${video.title} on HapiEats TV.`,
     thumbnailUrl: vid.mux_playback_id
-      ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=1280&height=720&time=0`
+      ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=1280&height=720&fit_mode=preserve&time=0`
       : 'https://hapieatstv.com/icon',
     uploadDate: video.created_at ?? new Date().toISOString(),
     contentUrl: `https://hapieatstv.com/watch/${video.id}`,

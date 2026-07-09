@@ -41,16 +41,31 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If channelId provided, verify it belongs to this creator
+    // If channelId provided, verify the user may post to it:
+    // owner always can; others only when the channel has open_posting enabled.
     if (channelId) {
-      const { data: channel } = await serviceClient
+      const { data: channel, error: channelError } = await serviceClient
         .from('channels')
-        .select('id')
+        .select('id, creator_id, open_posting')
         .eq('id', channelId)
-        .eq('creator_id', user.id)
         .single()
 
-      if (!channel) return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
+      if (channelError && channelError.message?.includes('open_posting')) {
+        // Live DB doesn't have the open_posting column yet — fall back to owner-only check
+        const { data: ownedChannel } = await serviceClient
+          .from('channels')
+          .select('id')
+          .eq('id', channelId)
+          .eq('creator_id', user.id)
+          .single()
+
+        if (!ownedChannel) return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
+      } else {
+        if (!channel) return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
+        if (channel.creator_id !== user.id && channel.open_posting !== true) {
+          return NextResponse.json({ error: 'This channel does not accept community posts' }, { status: 403 })
+        }
+      }
     }
 
     // Mux requires an explicit origin for direct uploads (not '*').

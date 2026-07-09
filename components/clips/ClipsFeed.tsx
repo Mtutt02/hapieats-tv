@@ -40,6 +40,8 @@ export default function ClipsFeed({
   const sectionRefs = useRef<(HTMLElement | null)[]>([])
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const loadingRef = useRef(false)
+  const abortRef = useRef<AbortController | null>(null)
+  const requestSeqRef = useRef(0)
   const cursorRef = useRef<string | null>(null)
   const clipsRef = useRef<Clip[]>(clips)
   const feedRef = useRef<ClipsFeedKind>(feed)
@@ -65,14 +67,22 @@ export default function ClipsFeed({
   // ── Fetch a page ──────────────────────────────────────────────────────────
   const fetchPage = useCallback(
     async (kind: ClipsFeedKind, cursor: string | null, replace: boolean) => {
-      if (loadingRef.current) return
+      // Pagination requests are deduped; replace requests (initial load / tab
+      // switch) always win — they abort whatever is in flight so rapid tab
+      // switches never end on an empty screen.
+      if (!replace && loadingRef.current) return
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      const seq = ++requestSeqRef.current
       loadingRef.current = true
       setLoading(true)
       setError(null)
       try {
         const params = new URLSearchParams({ feed: kind, limit: String(PAGE_SIZE) })
         if (cursor) params.set('cursor', cursor)
-        const res = await fetch(`/api/clips?${params.toString()}`)
+        const res = await fetch(`/api/clips?${params.toString()}`, { signal: controller.signal })
+        if (seq !== requestSeqRef.current) return
 
         if (res.status === 401 && kind === 'following') {
           setNeedsLogin(true)
@@ -83,6 +93,7 @@ export default function ClipsFeed({
         if (!res.ok) throw new Error(`Failed to load clips (${res.status})`)
 
         const data: ClipsFeedResponse = await res.json()
+        if (seq !== requestSeqRef.current) return
         const incoming = Array.isArray(data.clips) ? data.clips : []
 
         setClips(prev => {
@@ -92,15 +103,24 @@ export default function ClipsFeed({
         })
         setNextCursor(data.nextCursor ?? null)
       } catch (err) {
+        // A newer request superseded this one — its state is not ours to touch
+        if (controller.signal.aborted || seq !== requestSeqRef.current) return
         setError(err instanceof Error ? err.message : 'Failed to load clips')
       } finally {
-        loadingRef.current = false
-        setLoading(false)
-        setInitialLoaded(true)
+        if (seq === requestSeqRef.current) {
+          loadingRef.current = false
+          setLoading(false)
+          setInitialLoaded(true)
+        }
       }
     },
     [initialClip, initialLoaded]
   )
+
+  // Abort any in-flight fetch on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort()
+  }, [])
 
   // Initial load
   useEffect(() => {
@@ -250,7 +270,8 @@ export default function ClipsFeed({
       <div className="h-full w-full lg:max-w-[420px] lg:mx-auto">
         <div
           ref={containerRef}
-          className="h-full w-full overflow-y-auto snap-y snap-mandatory overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="h-full w-full overflow-y-auto snap-y snap-mandatory touch-pan-y overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
         >
           {clips.map((clip, i) => (
             <section
@@ -267,6 +288,7 @@ export default function ClipsFeed({
                 isActive={i === activeIndex}
                 muted={muted}
                 onToggleMute={toggleMute}
+                preload={Math.abs(i - activeIndex) <= 1}
               />
             </section>
           ))}

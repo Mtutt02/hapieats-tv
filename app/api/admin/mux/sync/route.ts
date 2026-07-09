@@ -46,7 +46,7 @@ export async function POST() {
       // Update if status changed or playback_id missing
       if (videoRecord.status !== status || !videoRecord.mux_playback_id) {
         const thumbUrl = playbackId
-          ? `https://image.mux.com/${playbackId}/thumbnail.jpg?time=0`
+          ? `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&fit_mode=preserve&time=0`
           : null
 
         await service

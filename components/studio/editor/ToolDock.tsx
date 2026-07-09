@@ -238,7 +238,7 @@ function MediaTab() {
               >
                 {v.mux_playback_id && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={`https://image.mux.com/${v.mux_playback_id}/thumbnail.jpg?width=320&time=1`} alt="" className="aspect-video w-full object-cover" loading="lazy" />
+                  <img src={`https://image.mux.com/${v.mux_playback_id}/thumbnail.jpg?width=320&fit_mode=preserve&time=1`} alt="" className="aspect-video w-full object-cover" loading="lazy" />
                 )}
                 <span className="block truncate px-1.5 py-1 text-[10px] text-zinc-300">{v.title}</span>
               </button>

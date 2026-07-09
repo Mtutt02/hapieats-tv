@@ -88,23 +88,36 @@ export async function POST(req: NextRequest) {
       p_metadata: { gift_id, gift_name: gift.name, quantity, stream_id: stream_id ?? null, creator_cents: creatorCents },
     })
 
-    // Ensure creator wallet exists and update it
-    await service.rpc('ensure_creator_wallet', { p_creator_id: recipient_id })
-
+    // Credit creator wallet (atomic via wallet_add RPC)
     const month = new Date().toISOString().slice(0, 7) // '2026-07'
-    const { data: cw } = await service.from('creator_wallets').select('monthly_earnings, redeemable_cents, lifetime_earnings_cents, tokens_received').eq('creator_id', recipient_id).single()
 
-    const monthly = (cw?.monthly_earnings ?? {}) as Record<string, Record<string, number>>
-    monthly[month] = monthly[month] ?? { gifts: 0, challenges: 0, goals: 0, circle: 0 }
-    monthly[month].gifts = (monthly[month].gifts ?? 0) + creatorCents
+    const { error: walletAddErr } = await service.rpc('wallet_add', {
+      p_creator_id: recipient_id,
+      p_tokens: totalTokens,
+      p_cents: creatorCents,
+    })
 
-    await service.from('creator_wallets').update({
-      tokens_received: (cw?.tokens_received ?? 0) + totalTokens,
-      redeemable_cents: (cw?.redeemable_cents ?? 0) + creatorCents,
-      lifetime_earnings_cents: (cw?.lifetime_earnings_cents ?? 0) + creatorCents,
-      monthly_earnings: monthly,
-      updated_at: new Date().toISOString(),
-    }).eq('creator_id', recipient_id)
+    if (walletAddErr) {
+      // Fallback: wallet_add migration not applied yet (function not found) —
+      // use the legacy read-then-update path so credits are never dropped.
+      console.error('[send-gift] wallet_add RPC failed, falling back to upsert:', walletAddErr)
+
+      await service.rpc('ensure_creator_wallet', { p_creator_id: recipient_id })
+
+      const { data: cw } = await service.from('creator_wallets').select('monthly_earnings, redeemable_cents, lifetime_earnings_cents, tokens_received').eq('creator_id', recipient_id).single()
+
+      const monthly = (cw?.monthly_earnings ?? {}) as Record<string, Record<string, number>>
+      monthly[month] = monthly[month] ?? { gifts: 0, challenges: 0, goals: 0, circle: 0 }
+      monthly[month].gifts = (monthly[month].gifts ?? 0) + creatorCents
+
+      await service.from('creator_wallets').update({
+        tokens_received: (cw?.tokens_received ?? 0) + totalTokens,
+        redeemable_cents: (cw?.redeemable_cents ?? 0) + creatorCents,
+        lifetime_earnings_cents: (cw?.lifetime_earnings_cents ?? 0) + creatorCents,
+        monthly_earnings: monthly,
+        updated_at: new Date().toISOString(),
+      }).eq('creator_id', recipient_id)
+    }
 
     // Add to circle pool
     if (circleCents > 0) {

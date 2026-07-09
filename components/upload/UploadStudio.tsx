@@ -34,6 +34,28 @@ function formatBytes(bytes: number): string {
 
 const MAX_UPLOAD_BYTES = 20 * 1024 ** 3
 
+function formatDuration(secs: number): string {
+  const m = Math.floor(secs / 60)
+  const s = Math.round(secs % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** Probe a video file's duration (seconds) with a temp <video> element. */
+function probeDuration(file: File): Promise<number | null> {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file)
+    const probe = document.createElement('video')
+    probe.preload = 'metadata'
+    const done = (d: number | null) => {
+      URL.revokeObjectURL(url)
+      resolve(d)
+    }
+    probe.onloadedmetadata = () => done(Number.isFinite(probe.duration) ? probe.duration : null)
+    probe.onerror = () => done(null)
+    probe.src = url
+  })
+}
+
 export default function UploadStudio({ channels }: UploadStudioProps) {
   const router = useRouter()
   const uploadStore = useUploadStore()
@@ -57,6 +79,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
 
   const [isClip, setIsClip] = useState(false)
   const [clipCategory, setClipCategory] = useState<ClipCategory>('food')
+  const [clipLengthError, setClipLengthError] = useState<string | null>(null)
   const probedFileRef = useRef<File | null>(null)
 
   // Auto-enable "Post as Clip" when the first selected file is portrait and short.
@@ -80,6 +103,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
 
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
+    setClipLengthError(null)
     if (accepted.length === 0) return
     const valid: File[] = []
     const rejected: string[] = []
@@ -99,6 +123,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
   })
 
   const removeFile = (index: number) => {
+    setClipLengthError(null)
     setFiles(prev => {
       const next = prev.filter((_, i) => i !== index)
       if (index === 0) setEditorOutput(null) // edits belong to the first clip
@@ -122,6 +147,21 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
     if (files.length === 0) return
     if (!title.trim()) { setTitleError('Add a title first'); return }
     setComposeWarning(null)
+
+    // Clips must be short — validate every queued file before uploading anything.
+    // Video mode is never blocked by length.
+    setClipLengthError(null)
+    if (isClip) {
+      for (const f of files) {
+        const duration = await probeDuration(f)
+        if (duration != null && duration > CLIP_MAX_SECONDS + 5) {
+          setClipLengthError(
+            `Clips must be ${CLIP_MAX_SECONDS}s or less — '${f.name}' is ${formatDuration(duration)}. Post it as a Video instead.`
+          )
+          return
+        }
+      }
+    }
 
     const output = editorOutput
     const trimmed = !!output && (
@@ -325,7 +365,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => setIsClip(false)}
+              onClick={() => { setIsClip(false); setClipLengthError(null) }}
               aria-pressed={!isClip}
               className={cn(
                 'flex items-start gap-3 rounded-2xl border-2 p-4 text-left transition-all',
@@ -346,7 +386,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
 
             <button
               type="button"
-              onClick={() => setIsClip(true)}
+              onClick={() => { setIsClip(true); setClipLengthError(null) }}
               aria-pressed={isClip}
               className={cn(
                 'flex items-start gap-3 rounded-2xl border-2 p-4 text-left transition-all',
@@ -365,6 +405,13 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
               {isClip && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />}
             </button>
           </div>
+
+          {clipLengthError && (
+            <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-300 -mt-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {clipLengthError}
+            </div>
+          )}
 
           {isClip && (
             <div className="flex flex-wrap items-center gap-1.5 -mt-2">

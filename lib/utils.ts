@@ -56,7 +56,7 @@ export function getVideoThumbnail(muxPlaybackId: string | null, thumbnailUrl: st
   if (muxPlaybackId) {
     // Vary the thumbnail capture time per video so cards look distinct (0–45 s range)
     const offset = seedId ? (seedId.charCodeAt(0) + seedId.charCodeAt(1)) % 45 : 5
-    return `https://image.mux.com/${muxPlaybackId}/thumbnail.jpg?width=640&time=${offset}`
+    return `https://image.mux.com/${muxPlaybackId}/thumbnail.jpg?width=640&fit_mode=preserve&time=${offset}`
   }
   return '/placeholder-video.jpg'
 }

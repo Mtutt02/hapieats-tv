@@ -8,6 +8,7 @@ import {
   Loader2,
   MessageCircle,
   MoreHorizontal,
+  Play,
   Share2,
   Volume2,
   VolumeX,
@@ -22,8 +23,28 @@ export function formatCount(n: number): string {
 }
 
 // ─── Lazy Mux player (loaded only when a clip becomes active) ─────────────────
-function LazyMuxPlayer({ playbackId, muted, poster }: { playbackId: string; muted: boolean; poster: string }) {
+/** Minimal surface of the <mux-player> custom element the feed needs */
+type PlayableElement = { play: () => Promise<void>; paused: boolean }
+
+function LazyMuxPlayer({
+  playbackId,
+  muted,
+  poster,
+  playerElRef,
+  onPlaybackBlocked,
+  onPlaying,
+}: {
+  playbackId: string
+  muted: boolean
+  poster: string
+  playerElRef: React.MutableRefObject<PlayableElement | null>
+  onPlaybackBlocked: () => void
+  onPlaying: () => void
+}) {
   const [MuxPlayer, setMuxPlayer] = useState<React.ComponentType<Record<string, unknown>> | null>(null)
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const onPlaybackBlockedRef = useRef(onPlaybackBlocked)
+  onPlaybackBlockedRef.current = onPlaybackBlocked
 
   useEffect(() => {
     let cancelled = false
@@ -35,6 +56,27 @@ function LazyMuxPlayer({ playbackId, muted, poster }: { playbackId: string; mute
     }
   }, [])
 
+  // iOS/Safari can silently reject autoplay — nudge playback once the player is
+  // mounted, and surface a tap-to-play button instead of a black frame.
+  useEffect(() => {
+    if (!MuxPlayer) return
+    const t = setTimeout(() => {
+      const el = hostRef.current?.querySelector('mux-player') as unknown as PlayableElement | null
+      playerElRef.current = el ?? null
+      if (!el || !el.paused) return
+      try {
+        const p = el.play()
+        if (p && typeof p.catch === 'function') p.catch(() => onPlaybackBlockedRef.current())
+      } catch {
+        onPlaybackBlockedRef.current()
+      }
+    }, 200)
+    return () => {
+      clearTimeout(t)
+      playerElRef.current = null
+    }
+  }, [MuxPlayer, playerElRef])
+
   if (!MuxPlayer) {
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -44,23 +86,30 @@ function LazyMuxPlayer({ playbackId, muted, poster }: { playbackId: string; mute
   }
 
   return (
-    <MuxPlayer
-      playbackId={playbackId}
-      streamType="on-demand"
-      autoPlay
-      muted={muted}
-      loop
-      playsInline
-      poster={poster}
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        // Hide every native Mux control — the feed provides its own UI
-        '--controls': 'none',
-        '--media-object-fit': 'cover',
-      } as React.CSSProperties}
-    />
+    <div ref={hostRef} className="h-full w-full">
+      <MuxPlayer
+        playbackId={playbackId}
+        streamType="on-demand"
+        autoPlay="muted"
+        muted={muted}
+        loop
+        playsInline
+        preload="auto"
+        poster={poster}
+        onPlaying={onPlaying}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          // The parent overlay owns all touch/click gestures — the player must
+          // never swallow them, or swipes die on mobile.
+          pointerEvents: 'none',
+          // Hide every native Mux control — the feed provides its own UI
+          '--controls': 'none',
+          '--media-object-fit': 'contain',
+        } as React.CSSProperties}
+      />
+    </div>
   )
 }
 
@@ -88,12 +137,18 @@ export default function ClipCard({
   isActive,
   muted,
   onToggleMute,
+  preload = false,
 }: {
   clip: Clip
   isActive: boolean
   muted: boolean
   onToggleMute: () => void
+  /** true for the active clip and its ±1 neighbors — posters load eagerly */
+  preload?: boolean
 }) {
+  // ── Playback (mobile autoplay can be blocked) ──
+  const playerElRef = useRef<PlayableElement | null>(null)
+  const [needsTap, setNeedsTap] = useState(false)
   // ── Like (optimistic) ──
   const [liked, setLiked] = useState(Boolean(clip.liked))
   const [likeCount, setLikeCount] = useState(clip.like_count)
@@ -115,6 +170,28 @@ export default function ClipCard({
       if (toastTimer.current) clearTimeout(toastTimer.current)
     }
   }, [])
+
+  // Reset the blocked-playback state whenever this card leaves the viewport
+  useEffect(() => {
+    if (!isActive) setNeedsTap(false)
+  }, [isActive])
+
+  const handleSurfaceTap = () => {
+    if (needsTap) {
+      const el = playerElRef.current
+      if (el) {
+        try {
+          el.play()
+            .then(() => setNeedsTap(false))
+            .catch(() => {})
+        } catch {
+          // ignore — the play button stays visible for another try
+        }
+      }
+      return
+    }
+    onToggleMute()
+  }
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -229,18 +306,54 @@ export default function ClipCard({
       {/* ── Video / poster layer ── */}
       {isActive ? (
         <div className="absolute inset-0">
-          <LazyMuxPlayer playbackId={clip.mux_playback_id} muted={muted} poster={poster} />
+          <LazyMuxPlayer
+            playbackId={clip.mux_playback_id}
+            muted={muted}
+            poster={poster}
+            playerElRef={playerElRef}
+            onPlaybackBlocked={() => setNeedsTap(true)}
+            onPlaying={() => setNeedsTap(false)}
+          />
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={poster} alt={clip.title} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+        <img
+          src={poster}
+          alt={clip.title}
+          className="absolute inset-0 w-full h-full object-contain"
+          loading={preload ? 'eager' : 'lazy'}
+        />
+      )}
+
+      {/* ── Gesture overlay: the player has pointer-events none, so this layer
+             owns tap-to-unmute / tap-to-play while swipes pass through to the
+             snap scroller ── */}
+      {isActive && (
+        <button
+          type="button"
+          onClick={handleSurfaceTap}
+          aria-label={needsTap ? 'Play clip' : muted ? 'Unmute clip' : 'Mute clip'}
+          className="absolute inset-0 z-[5] h-full w-full cursor-default focus:outline-none"
+        />
+      )}
+
+      {/* ── Center play button when autoplay was blocked ── */}
+      {isActive && needsTap && (
+        <button
+          type="button"
+          onClick={handleSurfaceTap}
+          aria-label="Play clip"
+          className="absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 flex h-16 w-16 items-center justify-center rounded-full bg-black/60 border border-white/30 text-white backdrop-blur-sm active:scale-95 transition-transform"
+        >
+          <Play className="h-8 w-8 fill-white" />
+        </button>
       )}
 
       {/* Bottom gradient for legibility */}
       <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
 
       {/* ── Tap-to-unmute pill ── */}
-      {isActive && muted && (
+      {isActive && muted && !needsTap && (
         <button
           onClick={onToggleMute}
           aria-label="Unmute"

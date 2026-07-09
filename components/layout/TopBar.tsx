@@ -15,7 +15,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import Logo from './Logo'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 
@@ -130,14 +129,20 @@ export default function TopBar({ onMenuOpen }: { onMenuOpen?: () => void }) {
           </button>
         )}
 
-        {/* Logo — icon + wordmark */}
+        {/* Logo — TV+HE mark + wordmark */}
         <Link href="/" className="flex items-center gap-1.5 flex-shrink-0" aria-label="HapiEats TV">
-          <Logo size={24} />
+          <svg viewBox="0 0 64 64" className="h-6 w-6" aria-hidden="true">
+            <line x1="32" y1="19" x2="23" y2="8" stroke="#10b981" strokeWidth="4" strokeLinecap="round" />
+            <line x1="32" y1="19" x2="41" y2="8" stroke="#10b981" strokeWidth="4" strokeLinecap="round" />
+            <rect x="10" y="18" width="44" height="33" rx="8" fill="none" stroke="#10b981" strokeWidth="5" />
+            <line x1="21" y1="53" x2="21" y2="58" stroke="#10b981" strokeWidth="5" strokeLinecap="round" />
+            <line x1="43" y1="53" x2="43" y2="58" stroke="#10b981" strokeWidth="5" strokeLinecap="round" />
+            <text x="32" y="41" textAnchor="middle" fontFamily="Arial, Helvetica, sans-serif" fontWeight="900" fontSize="19" fill="#ffffff" letterSpacing="0.5">HE</text>
+          </svg>
           {/* Wordmark: hidden on very small screens, shown otherwise */}
           <span className="hidden xs:flex items-baseline leading-none">
-            <span className="font-black text-sm tracking-tight text-cyan-400">HAPI</span>
-            <span className="font-black text-sm tracking-tight text-white">EATS</span>
-            <span className="font-black text-sm tracking-tight text-pink-500 italic ml-0.5">TV</span>
+            <span className="font-black text-sm tracking-tight text-white">HapiEats</span>
+            <span className="font-black text-sm tracking-tight ml-1 bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">TV</span>
           </span>
         </Link>
 

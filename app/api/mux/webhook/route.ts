@@ -43,10 +43,42 @@ export async function POST(req: NextRequest) {
       break
     }
 
+    case 'video.upload.errored':
+    case 'video.upload.cancelled': {
+      // Upload never became an asset — mark the row failed so it doesn't
+      // sit in 'uploading'/'processing' forever (ghost upload)
+      const uploadId = event.data.id ?? event.data.upload_id
+
+      const { error: failErr } = await supabase
+        .from('videos')
+        .update({ status: 'failed' })
+        .eq('mux_upload_id', uploadId)
+
+      if (failErr) {
+        // Pre-migration the videos_status_check CHECK doesn't include
+        // 'failed' — fall back to 'errored' so the row never stays stuck
+        await supabase
+          .from('videos')
+          .update({ status: 'errored' })
+          .eq('mux_upload_id', uploadId)
+      }
+      break
+    }
+
     case 'video.asset.ready': {
-      // Video is ready to stream
+      // Video is ready to stream.
+      // Idempotent: Mux may redeliver this event — only set published_at and
+      // increment the channel video count on the first transition to 'ready'.
       const asset = event.data
       const playbackId = asset.playback_ids?.[0]?.id ?? null
+
+      const { data: existing } = await supabase
+        .from('videos')
+        .select('channel_id, status, published_at')
+        .eq('mux_asset_id', asset.id)
+        .single()
+
+      const alreadyReady = existing?.status === 'ready'
 
       await supabase
         .from('videos')
@@ -55,19 +87,15 @@ export async function POST(req: NextRequest) {
           mux_playback_id: playbackId,
           duration: Math.floor(asset.duration ?? 0),
           thumbnail_url: playbackId ? getThumbnailUrl(playbackId) : null,
-          published_at: new Date().toISOString(),
+          published_at: alreadyReady
+            ? (existing?.published_at ?? new Date().toISOString())
+            : new Date().toISOString(),
         })
         .eq('mux_asset_id', asset.id)
 
-      // Increment video_count on the channel
-      const { data: video } = await supabase
-        .from('videos')
-        .select('channel_id')
-        .eq('mux_asset_id', asset.id)
-        .single()
-
-      if (video?.channel_id) {
-        await supabase.rpc('increment_channel_video_count', { channel_id: video.channel_id })
+      // Increment video_count on the channel — first transition only
+      if (!alreadyReady && existing?.channel_id) {
+        await supabase.rpc('increment_channel_video_count', { channel_id: existing.channel_id })
       }
       break
     }
