@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
 import {
   UploadCloud, AlertCircle, Globe, Lock,
-  ArrowRight, CheckCircle2, Scissors, X, Wand2, Plus, Film, ChevronDown,
+  ArrowRight, CheckCircle2, Scissors, X, Wand2, Plus, Film, ChevronDown, Clapperboard,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,6 +15,7 @@ import QuickEdit from '@/components/upload/QuickEdit'
 import type { EditorOutput } from '@/components/editor/types'
 import { useUploadStore, type UploadStatus } from '@/lib/upload-store'
 import { composeFinalVideo } from '@/lib/video-compositor'
+import { CLIP_CATEGORIES, CLIP_MAX_SECONDS, type ClipCategory } from '@/lib/clips/types'
 
 interface Channel { id: string; name: string; slug: string }
 interface Station { id: string; name: string }
@@ -53,6 +54,29 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
   const [uploadIndex, setUploadIndex] = useState(0)
   const [totalUploads, setTotalUploads] = useState(0)
   const [composeWarning, setComposeWarning] = useState<string | null>(null)
+
+  const [isClip, setIsClip] = useState(false)
+  const [clipCategory, setClipCategory] = useState<ClipCategory>('food')
+  const probedFileRef = useRef<File | null>(null)
+
+  // Auto-enable "Post as Clip" when the first selected file is portrait and short.
+  // Only ever turns the toggle ON — the user stays free to toggle it off.
+  useEffect(() => {
+    const first = files[0]
+    if (!first || probedFileRef.current === first) return
+    probedFileRef.current = first
+    const url = URL.createObjectURL(first)
+    const probe = document.createElement('video')
+    probe.preload = 'metadata'
+    probe.onloadedmetadata = () => {
+      if (probe.videoHeight > probe.videoWidth && probe.duration <= CLIP_MAX_SECONDS + 5) {
+        setIsClip(true)
+      }
+      URL.revokeObjectURL(url)
+    }
+    probe.onerror = () => URL.revokeObjectURL(url)
+    probe.src = url
+  }, [files])
 
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
@@ -162,6 +186,8 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
         musicTrack: isEditedClip && !editsBaked ? output?.musicTrack ?? null : null,
         filters: isEditedClip && !editsBaked ? filtersJson : null,
         voiceoverBlob: isEditedClip && !editsBaked ? output?.voiceoverBlob ?? null : null,
+        isClip,
+        clipCategory: isClip ? clipCategory : null,
       })
       if (useUploadStore.getState().status === 'error') break
       if (i === 0) setUploadedVideoId(useUploadStore.getState().videoId)
@@ -324,6 +350,40 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             rows={3}
             className="bg-zinc-900 border-zinc-700 text-white placeholder-zinc-600"
           />
+
+          {/* Post as Clip */}
+          <div className="rounded-xl border border-zinc-800 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsClip(!isClip)}
+                aria-pressed={isClip}
+                className={cn(
+                  'flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium transition-all',
+                  isClip
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-zinc-700 text-zinc-400 hover:border-primary/50 hover:text-zinc-200'
+                )}
+              >
+                <Clapperboard className="h-4 w-4" />
+                Clip — vertical short (≤{CLIP_MAX_SECONDS}s)
+              </button>
+              {isClip && (
+                <select
+                  value={clipCategory}
+                  onChange={e => setClipCategory(e.target.value as ClipCategory)}
+                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white capitalize focus:outline-none focus:border-primary/50"
+                >
+                  {CLIP_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat} className="capitalize">{cat}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {isClip && files.length > 1 && (
+              <p className="mt-2 text-[11px] text-zinc-500">All clips in this batch post as Clips</p>
+            )}
+          </div>
 
           {/* Collapsible Edit video section */}
           <div className="rounded-xl border border-zinc-800 overflow-hidden">

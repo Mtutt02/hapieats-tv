@@ -26,6 +26,7 @@ interface NavItem {
 
 const ALWAYS_VISIBLE: NavItem[] = [
   { href: '/',      icon: Home,  label: 'Home',     exact: true },
+  { href: '/clips', icon: Clapperboard, label: 'Clips' },
   { href: '/live',  icon: Radio, label: 'Live'  },
   { href: '/stations', icon: Rss, label: 'Stations' },
 ]

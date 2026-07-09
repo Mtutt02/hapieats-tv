@@ -21,6 +21,8 @@ export interface UploadMeta {
   filters?: string | null   // JSON stringified FilterSettings
   thumbnail?: string | null // data URL
   voiceoverBlob?: Blob | null
+  isClip?: boolean
+  clipCategory?: string | null
 }
 
 interface UploadStore {

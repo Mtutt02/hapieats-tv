@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { X, Download, UploadCloud, Loader2, CheckCircle2, Crown } from 'lucide-react'
+import { X, Download, UploadCloud, Loader2, CheckCircle2, Crown, Clapperboard } from 'lucide-react'
 import { useEditor } from '@/lib/editor/store'
 import { exportProject, publishToPlatform, downloadResult, ExportResult } from '@/lib/editor/export'
 import { engineRef } from './PreviewPanel'
@@ -9,7 +9,10 @@ import { usePremium } from './usePremium'
 
 export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const title = useEditor(s => s.project.title)
+  const aspect = useEditor(s => s.project.aspect)
   const { limits, isPremium, gate } = usePremium()
+  const isVertical = aspect === '9:16'
+  const [publishAsClip, setPublishAsClip] = useState(true)
   const [phase, setPhase] = useState<'idle' | 'rendering' | 'uploading' | 'done' | 'error'>('idle')
   const [pct, setPct] = useState(0)
   const [label, setLabel] = useState('')
@@ -57,7 +60,12 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
     setLabel('Uploading to HapiEats TV…')
     setPct(0)
     try {
-      const { videoId } = await publishToPlatform(result, { title }, p => setPct(p))
+      const { videoId } = await publishToPlatform(
+        result,
+        { title },
+        p => setPct(p),
+        { isClip: isVertical && publishAsClip, clipCategory: isVertical && publishAsClip ? 'food' : null },
+      )
       setVideoId(videoId)
       setPhase('done')
     } catch (e) {
@@ -119,6 +127,18 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="mt-6 space-y-2">
             {error && <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">{error}</p>}
+            {isVertical && (
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={publishAsClip}
+                  onChange={e => setPublishAsClip(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-emerald-500"
+                />
+                <Clapperboard className="h-3.5 w-3.5 text-emerald-400" />
+                Publish as a Clip
+              </label>
+            )}
             <button onClick={doPublish} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 py-3 text-sm font-bold text-black hover:opacity-90">
               <UploadCloud className="h-4 w-4" /> Publish to HapiEats TV
             </button>

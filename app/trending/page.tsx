@@ -5,6 +5,7 @@ import { SAMPLE_VIDEOS } from '@/lib/sample-data'
 import Image from 'next/image'
 import Link from 'next/link'
 import { TrendingUp } from 'lucide-react'
+import ClipsRail from '@/components/home/ClipsRail'
 
 export const metadata: Metadata = {
   title: 'Trending',
@@ -42,6 +43,11 @@ export default async function TrendingPage() {
             <h1 className="text-2xl font-bold">Trending</h1>
             <p className="text-sm text-muted-foreground">Most-watched food content right now</p>
           </div>
+        </div>
+
+        {/* Rail renders null until clip data loads; empty:hidden removes the ghost margin */}
+        <div className="mb-8 empty:hidden">
+          <ClipsRail />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

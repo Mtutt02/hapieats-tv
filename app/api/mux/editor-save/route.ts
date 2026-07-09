@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { CLIP_CATEGORIES } from '@/lib/clips/types'
 
 /**
  * POST /api/mux/editor-save
  * Creates a video DB record tied to an existing Mux upload (from Munchor Studio).
- * Body: { uploadId, title, description?, channelId?, stationId?, visibility?, pricingModel?, price? }
+ * Body: { uploadId, title, description?, channelId?, stationId?, visibility?, pricingModel?, price?, isClip?, clipCategory? }
  */
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +14,13 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { uploadId, title, description, channelId, stationId, visibility, pricingModel, price } = body
+    const { uploadId, title, description, channelId, stationId, visibility, pricingModel, price, isClip, clipCategory } = body
+
+    // Clips — validate the category against the shared allowed list
+    const wantsClip = isClip === true
+    const safeClipCategory = wantsClip && typeof clipCategory === 'string' && (CLIP_CATEGORIES as readonly string[]).includes(clipCategory)
+      ? clipCategory
+      : wantsClip ? 'food' : null
 
     if (!uploadId) return NextResponse.json({ error: 'uploadId is required' }, { status: 400 })
     if (!title) return NextResponse.json({ error: 'title is required' }, { status: 400 })
@@ -39,23 +46,37 @@ export async function POST(req: NextRequest) {
       if (!channel) return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
     }
 
-    const { data: videoRecord, error } = await service
+    const baseRow = {
+      title,
+      description: description ?? null,
+      channel_id: channelId ?? null,
+      station_id: stationId ?? null,
+      creator_id: user.id,
+      mux_upload_id: uploadId,
+      status: 'uploading',
+      visibility: visibility ?? 'public',
+      pricing_model: pricingModel ?? 'free',
+      price: price ?? null,
+      post_type: channelId ? 'channel' : stationId ? 'station' : 'general',
+    }
+
+    // Try with clip fields first; if the migration hasn't run yet (missing
+    // column → Postgres 42703), retry without them so publishes never break.
+    let { data: videoRecord, error } = await service
       .from('videos')
-      .insert({
-        title,
-        description: description ?? null,
-        channel_id: channelId ?? null,
-        station_id: stationId ?? null,
-        creator_id: user.id,
-        mux_upload_id: uploadId,
-        status: 'uploading',
-        visibility: visibility ?? 'public',
-        pricing_model: pricingModel ?? 'free',
-        price: price ?? null,
-        post_type: channelId ? 'channel' : stationId ? 'station' : 'general',
-      })
+      .insert({ ...baseRow, is_clip: wantsClip, clip_category: safeClipCategory })
       .select('id')
       .single()
+
+    if (error && (error.code === '42703' || /is_clip|clip_category/.test(error.message ?? ''))) {
+      const retry = await service
+        .from('videos')
+        .insert(baseRow)
+        .select('id')
+        .single()
+      videoRecord = retry.data
+      error = retry.error
+    }
 
     if (error || !videoRecord) {
       console.error('DB error:', error)

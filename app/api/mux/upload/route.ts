@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { video as muxVideo } from '@/lib/mux'
+import { CLIP_CATEGORIES } from '@/lib/clips/types'
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +10,13 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl } = body
+    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl, isClip, clipCategory } = body
+
+    // Clips — validate the category against the shared allowed list
+    const wantsClip = isClip === true
+    const safeClipCategory = wantsClip && typeof clipCategory === 'string' && (CLIP_CATEGORIES as readonly string[]).includes(clipCategory)
+      ? clipCategory
+      : wantsClip ? 'food' : null
 
     const muxId = process.env.MUX_TOKEN_ID ?? ''
     if (!muxId || muxId.startsWith('your-') || muxId.length < 10) {
@@ -59,30 +66,44 @@ export async function POST(req: NextRequest) {
     })
 
     // Create video record in Supabase
-    const { data: videoRecord, error } = await serviceClient
+    const baseRow = {
+      title,
+      description: description ?? null,
+      channel_id: channelId ?? null,
+      creator_id: user.id,
+      mux_upload_id: upload.id,
+      status: 'uploading',
+      visibility: visibility ?? 'public',
+      pricing_model: pricingModel ?? 'free',
+      price: price ?? null,
+      post_type: postType ?? (channelId ? 'channel' : 'general'),
+      tags: tags ?? null,
+      station_id: stationId ?? null,
+      clip_start: clipStart ?? null,
+      clip_end: clipEnd ?? null,
+      edit_overlays: overlays ?? null,
+      edit_music_track: musicTrack ?? null,
+      edit_filters: filters ?? null,
+      edit_voiceover_url: voiceoverUrl ?? null,
+    }
+
+    // Try with clip fields first; if the migration hasn't run yet (missing
+    // column → Postgres 42703), retry without them so uploads never break.
+    let { data: videoRecord, error } = await serviceClient
       .from('videos')
-      .insert({
-        title,
-        description: description ?? null,
-        channel_id: channelId ?? null,
-        creator_id: user.id,
-        mux_upload_id: upload.id,
-        status: 'uploading',
-        visibility: visibility ?? 'public',
-        pricing_model: pricingModel ?? 'free',
-        price: price ?? null,
-        post_type: postType ?? (channelId ? 'channel' : 'general'),
-        tags: tags ?? null,
-        station_id: stationId ?? null,
-        clip_start: clipStart ?? null,
-        clip_end: clipEnd ?? null,
-        edit_overlays: overlays ?? null,
-        edit_music_track: musicTrack ?? null,
-        edit_filters: filters ?? null,
-        edit_voiceover_url: voiceoverUrl ?? null,
-      })
+      .insert({ ...baseRow, is_clip: wantsClip, clip_category: safeClipCategory })
       .select('id')
       .single()
+
+    if (error && (error.code === '42703' || /is_clip|clip_category/.test(error.message ?? ''))) {
+      const retry = await serviceClient
+        .from('videos')
+        .insert(baseRow)
+        .select('id')
+        .single()
+      videoRecord = retry.data
+      error = retry.error
+    }
 
     if (error || !videoRecord) {
       console.error('DB error:', error)

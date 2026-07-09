@@ -5,10 +5,13 @@ import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
 import VideoCard from '@/components/video/VideoCard'
 import VerifiedChefBadge from '@/components/badges/VerifiedChefBadge'
+import ClipsGrid, { type ProfileClip } from '@/components/profile/ClipsGrid'
+import FollowButton from '@/components/profile/FollowButton'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Settings, Tv, Users, Film } from 'lucide-react'
+import { Settings, Tv, Users, Film, Clapperboard } from 'lucide-react'
+import { formatViews } from '@/lib/utils'
 import type { Video } from '@/types'
 
 interface Props {
@@ -85,6 +88,57 @@ export default async function ProfilePage({ params }: Props) {
     .eq('creator_id', profile.id)
     .limit(6)
 
+  // Fetch this user's clips — tolerant of the clips migration not being
+  // applied yet (a missing is_clip column yields an empty list, not a crash)
+  let clips: ProfileClip[] = []
+  try {
+    const { data, error } = await supabase
+      .from('videos')
+      .select('id, title, mux_playback_id, view_count')
+      .eq('creator_id', profile.id)
+      .eq('is_clip', true)
+      .eq('status', 'ready')
+      .eq('visibility', 'public')
+      .order('created_at', { ascending: false })
+      .limit(24)
+    if (!error && data) clips = data as ProfileClip[]
+  } catch {
+    // is_clip column not present yet — leave clips empty
+  }
+
+  // Follower count — tolerant of the follower_count column not existing yet
+  let followerCount: number | undefined
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('follower_count')
+      .eq('id', profile.id)
+      .maybeSingle()
+    const fc = (data as { follower_count?: number } | null)?.follower_count
+    if (!error && typeof fc === 'number') followerCount = fc
+  } catch {
+    // column not present yet
+  }
+
+  // Is the signed-in visitor already following this creator?
+  let initialFollowing = false
+  if (user && !isOwnProfile) {
+    try {
+      const { data } = await supabase
+        .from('creator_follows')
+        .select('creator_id')
+        .eq('follower_id', user.id)
+        .eq('creator_id', profile.id)
+        .maybeSingle()
+      initialFollowing = !!data
+    } catch {
+      // table not present yet
+    }
+  }
+
+  // Keep clips out of the long-form videos grid (tolerant: is_clip may be absent)
+  const longFormVideos = ((videos ?? []) as (Video & { is_clip?: boolean })[]).filter(v => !v.is_clip)
+
   const joinedYear = new Date(profile.created_at).getFullYear()
 
   return (
@@ -115,9 +169,15 @@ export default async function ProfilePage({ params }: Props) {
             <p className="text-muted-foreground text-sm mt-0.5">@{profile.username}</p>
 
             <div className="flex items-center gap-4 mt-3 text-sm text-muted-foreground flex-wrap">
+              {typeof followerCount === 'number' && (
+                <span className="flex items-center gap-1">
+                  <Users className="h-4 w-4" />
+                  {formatViews(followerCount)} follower{followerCount !== 1 ? 's' : ''}
+                </span>
+              )}
               <span className="flex items-center gap-1">
                 <Film className="h-4 w-4" />
-                {videos?.length ?? 0} videos
+                {longFormVideos.length} videos
               </span>
               {channels && channels.length > 0 && (
                 <span className="flex items-center gap-1">
@@ -140,7 +200,13 @@ export default async function ProfilePage({ params }: Props) {
                     Edit Profile
                   </Link>
                 </Button>
-              ) : null}
+              ) : (
+                <FollowButton
+                  creatorId={profile.id}
+                  initialFollowing={initialFollowing}
+                  isSignedIn={!!user}
+                />
+              )}
               {profile.is_creator && channels && channels.length > 0 && (
                 <Button asChild size="sm" variant="outline" className="gap-2">
                   <Link href={`/channel/${channels[0].slug}`}>
@@ -183,17 +249,26 @@ export default async function ProfilePage({ params }: Props) {
           </section>
         )}
 
+        {/* Clips */}
+        <section className="mb-10">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Clapperboard className="h-5 w-5 text-primary" />
+            Clips
+          </h2>
+          <ClipsGrid clips={clips} />
+        </section>
+
         {/* Videos */}
         <section>
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Film className="h-5 w-5 text-primary" />
             Videos
           </h2>
-          {(videos?.length ?? 0) === 0 ? (
+          {longFormVideos.length === 0 ? (
             <p className="text-muted-foreground text-sm">No public videos yet.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-              {(videos as Video[]).map(v => (
+              {longFormVideos.map(v => (
                 <VideoCard key={v.id} video={v} />
               ))}
             </div>

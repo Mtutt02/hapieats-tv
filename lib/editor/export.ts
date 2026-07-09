@@ -123,6 +123,7 @@ export async function publishToPlatform(
   result: ExportResult,
   meta: { title: string; description?: string },
   onProgress?: (pct: number) => void,
+  opts?: { isClip?: boolean; clipCategory?: string | null },
 ): Promise<{ videoId: string }> {
   // 1) signed direct-upload URL from Mux
   const res = await fetch('/api/mux/direct-upload')
@@ -153,6 +154,8 @@ export async function publishToPlatform(
       uploadId,
       title: meta.title,
       description: meta.description || 'Created with HapiEats TV Studio',
+      isClip: opts?.isClip ?? false,
+      clipCategory: opts?.isClip ? opts?.clipCategory ?? null : null,
     }),
   })
   if (!save.ok) {

@@ -13,6 +13,7 @@ import { SAMPLE_STATIONS } from '@/lib/sample-data'
 import dynamic from 'next/dynamic'
 import { ChevronRight, Flame, Clock } from 'lucide-react'
 import CuisineTags, { CUISINE_TAGS } from '@/components/filters/CuisineTags'
+import ClipsRail from '@/components/home/ClipsRail'
 
 const MuxPlayer = dynamic(() => import('@mux/mux-player-react'), { ssr: false })
 
@@ -487,6 +488,9 @@ export default function HomeClient({
           </section>
         )}
 
+        {/* ── Trending clips rail — hides itself until data loads ───── */}
+        {activeCategory === 'All' && <ClipsRail />}
+
         {/* ── Stations — Stories bubbles ────────────────────────────── */}
         {activeCategory === 'All' && (
           <section>
@@ -529,14 +533,30 @@ export default function HomeClient({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 sm:gap-x-5 gap-y-6 sm:gap-y-8">
-              {hasRealContent && !showFollowing
-                ? gridVideos.map((v) => <RealVideoCard key={v.id} video={v as Video} isTouch={isTouch} />)
-                : showFollowing
-                ? (gridVideos as Video[]).map((v) => <RealVideoCard key={v.id} video={v} isTouch={isTouch} />)
-                : (gridVideos as SampleVideo[]).map((v) => <SampleVideoCard key={v.id} video={v} isTouch={isTouch} />)
-              }
-            </div>
+            (() => {
+              // YouTube-style interleaving: a clips shelf woven into the grid after the first rows
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const renderCards = (list: any[]) =>
+                hasRealContent && !showFollowing
+                  ? list.map((v) => <RealVideoCard key={v.id} video={v as Video} isTouch={isTouch} />)
+                  : showFollowing
+                  ? (list as Video[]).map((v) => <RealVideoCard key={v.id} video={v} isTouch={isTouch} />)
+                  : (list as SampleVideo[]).map((v) => <SampleVideoCard key={v.id} video={v} isTouch={isTouch} />)
+              const GRID = 'grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 sm:gap-x-5 gap-y-6 sm:gap-y-8'
+              return (
+                <>
+                  <div className={GRID}>{renderCards(gridVideos.slice(0, 8))}</div>
+                  {gridVideos.length > 8 ? (
+                    <>
+                      <div className="my-6 sm:my-8 empty:hidden">
+                        <ClipsRail feed="foryou" skip={12} title="Clips for you" emoji="⚡" />
+                      </div>
+                      <div className={GRID}>{renderCards(gridVideos.slice(8))}</div>
+                    </>
+                  ) : null}
+                </>
+              )
+            })()
           )}
         </section>
 
