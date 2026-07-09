@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 // Gift catalog — cost in points
 const GIFTS: Record<string, { name: string; emoji: string; pointsCost: number }> = {
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const rl = checkRateLimit(`${user.id}:flavor-gift`, 10, 60_000)
+  if (!rl.allowed) return NextResponse.json({ error: 'Too many gifts — slow down a moment.' }, { status: 429 })
 
   const { giftId, streamId } = await req.json()
   if (!giftId || !streamId) {

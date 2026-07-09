@@ -23,7 +23,7 @@ export async function POST(req: Request) {
   if (detail !== undefined && detail !== null && (typeof detail !== 'string' || detail.length > 2000)) {
     return NextResponse.json({ error: 'detail must be 2000 characters or fewer' }, { status: 400 })
   }
-  if (!['video', 'post', 'comment'].includes(resolvedType)) {
+  if (!['video', 'post', 'comment', 'chat_message', 'user'].includes(resolvedType)) {
     return NextResponse.json({ error: 'Invalid report type' }, { status: 400 })
   }
 
@@ -36,6 +36,10 @@ export async function POST(req: Request) {
 
   if (resolvedType === 'comment') {
     payload.comment_id = resolvedTarget
+  } else if (resolvedType === 'chat_message') {
+    payload.chat_message_id = resolvedTarget
+  } else if (resolvedType === 'user') {
+    payload.reported_user_id = resolvedTarget
   } else {
     // video or post — both stored in the videos table
     payload.video_id = resolvedTarget

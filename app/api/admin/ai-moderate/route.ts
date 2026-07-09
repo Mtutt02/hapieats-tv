@@ -35,7 +35,9 @@ interface FlaggedItem {
 
 async function runAIScan(): Promise<{ scanned: number; flagged: number; categories: string[] }> {
   const service = createServiceClient()
-  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+  // Cron runs once daily — scan the last 25 hours (1h overlap) so all content
+  // gets covered, newest first, capped to keep the AI call bounded.
+  const cutoff = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
 
   const [{ data: comments }, { data: chatMessages }] = await Promise.all([
     service
@@ -44,14 +46,16 @@ async function runAIScan(): Promise<{ scanned: number; flagged: number; categori
                author:profiles!comments_author_id_fkey(username),
                video:videos!comments_video_id_fkey(id, title)`)
       .gte('created_at', cutoff)
-      .limit(100),
+      .order('created_at', { ascending: false })
+      .limit(400),
     service
       .from('live_chat_messages')
       .select(`id, message, type, created_at,
                sender:profiles!live_chat_messages_sender_id_fkey(username)`)
       .gte('created_at', cutoff)
       .eq('type', 'message')
-      .limit(100),
+      .order('created_at', { ascending: false })
+      .limit(400),
   ])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

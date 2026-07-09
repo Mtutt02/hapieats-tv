@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import MuxPlayer from '@mux/mux-player-react'
 import { createClient } from '@/lib/supabase/client'
-import { Send, Gift, Lock, StopCircle, Users, Radio, X, ChevronRight } from 'lucide-react'
+import { Send, Gift, Lock, StopCircle, Users, Radio, X, ChevronRight, UserX, Flag } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -79,6 +79,41 @@ export default function LiveRoomClient({
   initialMessages,
 }: Props) {
   const [messages, setMessages]           = useState<ChatMessage[]>(initialMessages)
+  const [blockedIds, setBlockedIds]       = useState<Set<string>>(new Set())
+
+  // Load the caller's block list once — blocked users' messages are hidden
+  useEffect(() => {
+    if (!currentUser) return
+    fetch('/api/users/block')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.blocked) setBlockedIds(new Set<string>(d.blocked)) })
+      .catch(() => {})
+  }, [currentUser])
+
+  const blockUser = useCallback(async (userId: string, name: string) => {
+    if (!window.confirm(`Block ${name}? You won't see their chat messages anymore.`)) return
+    setBlockedIds(prev => new Set(prev).add(userId))
+    const res = await fetch('/api/users/block', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }).catch(() => null)
+    if (!res?.ok) {
+      setBlockedIds(prev => { const n = new Set(prev); n.delete(userId); return n })
+      window.alert('Could not block this user right now.')
+    }
+  }, [])
+
+  const reportMessage = useCallback(async (messageId: string, name: string) => {
+    const reason = window.prompt(`Report ${name}'s message — briefly tell us what's wrong:`)
+    if (!reason || reason.trim().length < 2) return
+    const res = await fetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: messageId, type: 'chat_message', reason: reason.trim().slice(0, 200) }),
+    }).catch(() => null)
+    window.alert(res?.ok ? 'Thanks — our moderators will review it.' : 'Could not submit the report right now.')
+  }, [])
   const [chatInput, setChatInput]         = useState('')
   const [sendingChat, setSendingChat]     = useState(false)
   const [showGifts, setShowGifts]         = useState(false)
@@ -406,7 +441,7 @@ export default function LiveRoomClient({
             </p>
           )}
 
-          {messages.map(msg => {
+          {messages.filter(m => !blockedIds.has(m.sender_id)).map(msg => {
             const isOwnMsg    = currentUser?.id === msg.sender_id
             const isCreatorMsg = msg.sender_id === stream.creator.id
             const senderName  = msg.sender?.display_name ?? msg.sender?.username ?? 'User'
@@ -462,19 +497,36 @@ export default function LiveRoomClient({
                   )}
                 </div>
 
-                {/* DM button (visible on hover, only for other users while stream is live) */}
+                {/* Hover actions: DM · report · block (other users' messages only) */}
                 {currentUser &&
                   !isOwnMsg &&
-                  isLive &&
                   !msg.is_private &&
                   msg.type === 'message' && (
-                    <button
-                      onClick={() => setPmTarget({ id: msg.sender_id, name: senderName })}
-                      title={`Send ${senderName} a private message`}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-zinc-600 hover:text-blue-400 p-0.5 mt-0.5"
-                    >
-                      <Lock className="h-3 w-3" />
-                    </button>
+                    <span className="flex flex-shrink-0 items-start gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
+                      {isLive && (
+                        <button
+                          onClick={() => setPmTarget({ id: msg.sender_id, name: senderName })}
+                          title={`Send ${senderName} a private message`}
+                          className="text-zinc-600 hover:text-blue-400 p-0.5"
+                        >
+                          <Lock className="h-3 w-3" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => reportMessage(msg.id, senderName)}
+                        title="Report this message"
+                        className="text-zinc-600 hover:text-amber-400 p-0.5"
+                      >
+                        <Flag className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={() => blockUser(msg.sender_id, senderName)}
+                        title={`Block ${senderName}`}
+                        className="text-zinc-600 hover:text-red-400 p-0.5"
+                      >
+                        <UserX className="h-3 w-3" />
+                      </button>
+                    </span>
                   )}
               </div>
             )
