@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import EditorPanel from '@/components/editor/EditorPanel'
+import QuickEdit from '@/components/upload/QuickEdit'
 import type { EditorOutput } from '@/components/editor/types'
 import { useUploadStore } from '@/lib/upload-store'
 import { composeFinalVideo } from '@/lib/video-compositor'
@@ -265,7 +265,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             >
               <div className="flex items-center gap-2">
                 <Scissors className={cn('h-4 w-4 transition-colors', showEditor && 'text-primary')} />
-                <span className={showEditor ? 'text-primary' : 'text-zinc-300'}>Edit video</span>
+                <span className={showEditor ? 'text-primary' : 'text-zinc-300'}>Quick edit</span>
                 {editorOutput && !showEditor && (
                   <span className="text-xs text-zinc-500 ml-1">
                     (trim{editorOutput.overlays?.length ? ', overlays' : ''}{editorOutput.musicTrack ? ', music' : ''}{editorOutput.filters?.preset ? ', filters' : ''})
@@ -275,13 +275,11 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
               <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition-transform', showEditor && 'rotate-180')} />
             </button>
             {showEditor && (
-              <div className="bg-zinc-950" style={{ height: '80vh' }}>
-                <EditorPanel
+              <div className="bg-zinc-950">
+                <QuickEdit
                   files={files}
                   onComplete={(output) => { setEditorOutput(output); setShowEditor(false) }}
                   onCancel={() => setShowEditor(false)}
-                  showTutorial={false}
-                  onDismissTutorial={() => {}}
                 />
               </div>
             )}

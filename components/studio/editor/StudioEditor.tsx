@@ -10,8 +10,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   ChevronLeft, Undo2, Redo2, Save, UploadCloud, Loader2, FolderOpen,
-  Crown, MonitorSmartphone, X, Trash2, PanelRightClose, PanelRightOpen,
+  Crown, MonitorSmartphone, X, Trash2, PanelRightClose, PanelRightOpen, CircleHelp,
 } from 'lucide-react'
+import { projectIdFromUrl } from '@/lib/editor/import'
 import { useEditor } from '@/lib/editor/store'
 import { AspectPreset, EditorProject } from '@/lib/editor/types'
 import {
@@ -51,10 +52,19 @@ function EditorShell() {
   const { setTitle, setAspect, undo, redo, markSaved, loadProject, reset, splitClip, removeClip } = useEditor()
   const [showExport, setShowExport] = useState(false)
   const [showProjects, setShowProjects] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [showInspector, setShowInspector] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savedProjects, setSavedProjects] = useState<EditorProject[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ---- open project passed via ?project= (Quick Edit handoff) ----
+  useEffect(() => {
+    const id = projectIdFromUrl()
+    if (!id) return
+    loadProjectLocal(id).then(p => { if (p) loadProject(p) }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---- autosave (local, debounced) ----
   useEffect(() => {
@@ -141,6 +151,7 @@ function EditorShell() {
         <button onClick={manualSave} className={HDR_BTN} title="Save (Ctrl+S)">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className={`h-4 w-4 ${dirty ? 'text-amber-400' : ''}`} />}
         </button>
+        <button onClick={() => setShowHelp(true)} className={HDR_BTN} title="Help & shortcuts"><CircleHelp className="h-4 w-4" /></button>
         <button onClick={() => setShowInspector(v => !v)} className={`${HDR_BTN} hidden lg:flex`} title="Toggle inspector">
           {showInspector ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
         </button>
@@ -183,6 +194,33 @@ function EditorShell() {
       </div>
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+
+      {showHelp && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowHelp(false)}>
+          <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-950 p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold">How the Studio works</h3>
+              <button onClick={() => setShowHelp(false)} className="text-zinc-500 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+            <ol className="mt-3 space-y-2 text-xs leading-relaxed text-zinc-300">
+              <li><b className="text-emerald-400">1 · Add media</b> — drop files on the preview, or use the <b>Media</b> tab (uploads + your published library).</li>
+              <li><b className="text-emerald-400">2 · Arrange</b> — drag clips on the timeline; drag their edges to trim; press <kbd className="rounded bg-zinc-800 px-1">S</kbd> to split at the red playhead.</li>
+              <li><b className="text-emerald-400">3 · Style</b> — select a clip and use the right-side inspector: position/scale (with ◆ keyframes), speed, filters, audio fades, text styling.</li>
+              <li><b className="text-emerald-400">4 · Enhance</b> — <b>Text</b> and <b>Audio</b> tabs add overlays, stickers, music, voiceover. The <b>AI</b> tab does captions, smart trim, and background removal.</li>
+              <li><b className="text-emerald-400">5 · Export</b> — publish straight to your HapiEats channel or download the file.</li>
+            </ol>
+            <p className="mt-4 mb-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">Keyboard shortcuts</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-zinc-400">
+              {[['Space', 'Play / pause'], ['S', 'Split clip at playhead'], ['Delete', 'Remove selected clip'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['← / →', 'Step one frame'], ['Shift+← / →', 'Step one second'], ['Ctrl+S', 'Save project']].map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between gap-2">
+                  <kbd className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-200">{k}</kbd>
+                  <span className="flex-1 text-right">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showProjects && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowProjects(false)}>

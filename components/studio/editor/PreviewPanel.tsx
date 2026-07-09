@@ -1,13 +1,54 @@
 'use client'
 
-import { useEffect, useRef, useCallback } from 'react'
-import { Play, Pause, SkipBack, SkipForward, Maximize2 } from 'lucide-react'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { Play, Pause, SkipBack, SkipForward, Maximize2, Upload, Loader2, Clapperboard } from 'lucide-react'
 import { useEditor } from '@/lib/editor/store'
 import { EditorEngine } from '@/lib/editor/engine'
 import { projectDuration } from '@/lib/editor/types'
+import { importFilesToTimeline } from '@/lib/editor/import'
 
 /** Shared engine handle for export / AI panels. */
 export const engineRef: { current: EditorEngine | null } = { current: null }
+
+/** Friendly first-run overlay shown while the timeline is empty. */
+function WelcomeOverlay() {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+
+  const pick = async (files: FileList | null) => {
+    if (!files?.length) return
+    setBusy(true)
+    try { await importFilesToTimeline(files, 0) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-b from-zinc-950/60 to-zinc-950/90 p-6 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/40 bg-gradient-to-br from-emerald-500/25 to-teal-500/10">
+        <Clapperboard className="h-7 w-7 text-emerald-300" />
+      </div>
+      <div>
+        <p className="text-lg font-black tracking-tight">Welcome to the Studio</p>
+        <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-zinc-400">
+          Drop a video anywhere on this screen, or add one from your library in the <b>Media</b> tab.
+        </p>
+      </div>
+      <button
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2.5 text-sm font-bold text-black hover:opacity-90 disabled:opacity-60"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+        Add your video
+      </button>
+      <input ref={inputRef} type="file" hidden multiple accept="video/*,image/*,audio/*" onChange={e => pick(e.target.files)} />
+      <div className="mt-2 flex flex-col gap-1 text-[11px] text-zinc-500 sm:flex-row sm:gap-5">
+        <span><b className="text-zinc-300">1.</b> Add media</span>
+        <span><b className="text-zinc-300">2.</b> Trim, style & animate on the timeline</span>
+        <span><b className="text-zinc-300">3.</b> Export → publish</span>
+      </div>
+    </div>
+  )
+}
 
 export function formatTime(t: number): string {
   const m = Math.floor(t / 60)
@@ -84,16 +125,24 @@ export default function PreviewPanel() {
 
   const duration = projectDuration(useEditor.getState().project)
   const vertical = aspect === '9:16'
+  const isEmpty = useEditor(s => s.project.tracks.every(t => t.clips.length === 0))
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div ref={canvasHostRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl bg-black/60 border border-zinc-800/80">
+      <div
+        ref={canvasHostRef}
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl bg-black/60 border border-zinc-800/80"
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); importFilesToTimeline(e.dataTransfer.files, 0) }}
+      >
         <canvas
           ref={canvasRef}
           className={vertical ? 'h-full max-h-full w-auto max-w-full' : 'w-full max-w-full h-auto max-h-full'}
           onClick={togglePlay}
         />
-        {!playing && (
+        {isEmpty ? (
+          <WelcomeOverlay />
+        ) : !playing && (
           <button
             onClick={togglePlay}
             className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition hover:bg-black/70"
