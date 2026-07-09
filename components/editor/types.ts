@@ -26,6 +26,8 @@ export interface EditorOutput {
   musicTrack: string | null
   voiceoverBlob: Blob | null
   filters: FilterSettings
+  /** duration of the source video in seconds — lets consumers detect a real trim */
+  sourceDuration?: number
 }
 
 // ---- NEW TYPES ----

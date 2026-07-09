@@ -124,6 +124,7 @@ export default function QuickEdit({ files, onComplete, onCancel }: Props) {
       musicTrack: musicId,
       voiceoverBlob: null,
       filters: { ...DEFAULT_FILTERS, preset },
+      sourceDuration: duration,
     })
   }
 

@@ -38,6 +38,10 @@ function applyFilters(ctx: CanvasRenderingContext2D, filters: FilterSettings): v
     parts.push('hue-rotate(200deg)', 'saturate(0.9)', 'brightness(0.95)')
   } else if (filters.preset === 'dramatic') {
     parts.push('contrast(1.5)', 'brightness(0.85)', 'saturate(1.3)')
+  } else if (filters.preset === 'golden') {
+    parts.push('sepia(0.35)', 'saturate(1.35)', 'brightness(1.08)', 'contrast(1.05)')
+  } else if (filters.preset === 'fresh') {
+    parts.push('saturate(1.4)', 'brightness(1.06)', 'contrast(1.02)')
   }
 
   if (filters.brightness !== 0) parts.push(`brightness(${1 + filters.brightness / 100})`)

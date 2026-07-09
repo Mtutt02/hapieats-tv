@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import QuickEdit from '@/components/upload/QuickEdit'
 import type { EditorOutput } from '@/components/editor/types'
-import { useUploadStore } from '@/lib/upload-store'
+import { useUploadStore, type UploadStatus } from '@/lib/upload-store'
 import { composeFinalVideo } from '@/lib/video-compositor'
 
 interface Channel { id: string; name: string; slug: string }
@@ -50,77 +50,124 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
   const [titleError, setTitleError] = useState<string | null>(null)
   const [showEditor, setShowEditor] = useState(false)
 
+  const [uploadIndex, setUploadIndex] = useState(0)
+  const [totalUploads, setTotalUploads] = useState(0)
+  const [composeWarning, setComposeWarning] = useState<string | null>(null)
+
   const onDrop = useCallback((accepted: File[]) => {
     setDropError(null)
     if (accepted.length === 0) return
-    const f = accepted[0]
-    if (f.size > MAX_UPLOAD_BYTES) {
-      setDropError(`File is ${formatBytes(f.size)} — 20 GB max.`)
-      return
+    const valid: File[] = []
+    const rejected: string[] = []
+    for (const f of accepted) {
+      if (f.size > MAX_UPLOAD_BYTES) rejected.push(`${f.name} (${formatBytes(f.size)})`)
+      else valid.push(f)
     }
-    setFiles(accepted)
-    setEditorOutput(null)
+    if (rejected.length) setDropError(`Over the 20 GB limit: ${rejected.join(', ')}`)
+    if (valid.length === 0) return
+    setFiles(prev => [...prev, ...valid])
     setShowEditor(false)
     setStep('meta')
   }, [])
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, accept: { 'video/*': [] }, maxFiles: 1, disabled: step !== 'select',
+  const { getRootProps, getInputProps, isDragActive, open: openFilePicker } = useDropzone({
+    onDrop, accept: { 'video/*': [] }, multiple: true, noClick: step !== 'select', noDrag: false,
   })
+
+  const removeFile = (index: number) => {
+    setFiles(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      if (index === 0) setEditorOutput(null) // edits belong to the first clip
+      if (next.length === 0) setStep('select')
+      return next
+    })
+  }
+
+  /** Resolves once the current background upload finishes pushing bytes (or fails). */
+  const waitForUploadSettled = () =>
+    new Promise<UploadStatus>((resolve) => {
+      const check = () => {
+        const s = useUploadStore.getState().status
+        if (s === 'processing' || s === 'done' || s === 'error') resolve(s)
+        else setTimeout(check, 500)
+      }
+      setTimeout(check, 500)
+    })
 
   const handleUpload = async () => {
     if (files.length === 0) return
     if (!title.trim()) { setTitleError('Add a title first'); return }
+    setComposeWarning(null)
 
-    const hasEdits = editorOutput && (
-      (editorOutput.overlays && editorOutput.overlays.length > 0) ||
-      editorOutput.filters?.preset ||
-      editorOutput.filters?.brightness !== 0 ||
-      editorOutput.filters?.contrast !== 0 ||
-      editorOutput.filters?.saturation !== 0 ||
-      editorOutput.filters?.warmth !== 0 ||
-      editorOutput.filters?.blur !== 0 ||
-      editorOutput.musicTrack ||
-      editorOutput.voiceoverBlob ||
-      editorOutput.clipStart !== 0 ||
-      editorOutput.clipEnd !== files[0]?.size
+    const output = editorOutput
+    const trimmed = !!output && (
+      output.clipStart > 0.05 ||
+      (output.sourceDuration != null && output.clipEnd < output.sourceDuration - 0.05)
+    )
+    const hasEdits = !!output && (
+      (output.overlays?.length ?? 0) > 0 ||
+      !!output.filters?.preset ||
+      output.filters?.brightness !== 0 ||
+      output.filters?.contrast !== 0 ||
+      output.filters?.saturation !== 0 ||
+      output.filters?.warmth !== 0 ||
+      output.filters?.blur !== 0 ||
+      !!output.musicTrack ||
+      !!output.voiceoverBlob ||
+      trimmed
     )
 
-    let uploadFile = files[0]
-
-    if (hasEdits && editorOutput) {
+    // Bake edits into the first clip (the one Quick Edit worked on)
+    let firstFile = files[0]
+    let editsBaked = false
+    if (hasEdits && output) {
       setIsComposing(true)
       setComposingProgress(0)
       try {
-        const composedBlob = await composeFinalVideo(files[0], editorOutput, {
-          onProgress: setComposingProgress,
-        })
-        uploadFile = new File([composedBlob], files[0].name.replace(/\.[^.]+$/, '') + '_edited.' +
-          (composedBlob.type.includes('webm') ? 'webm' : 'mp4'),
-          { type: composedBlob.type })
+        const composedBlob = await composeFinalVideo(files[0], output, { onProgress: setComposingProgress })
+        firstFile = new File(
+          [composedBlob],
+          files[0].name.replace(/\.[^.]+$/, '') + '_edited.' + (composedBlob.type.includes('webm') ? 'webm' : 'mp4'),
+          { type: composedBlob.type },
+        )
+        editsBaked = true
       } catch (err) {
-        console.warn('Video composition failed, uploading original:', err)
+        console.warn('Video composition failed, uploading original with edit metadata:', err)
+        setComposeWarning('Rendering edits on this device failed — the original file was uploaded and your edit settings were saved with the video.')
       }
       setIsComposing(false)
     }
 
-    const overlaysJson = (editorOutput?.overlays && editorOutput.overlays.length > 0) ? JSON.stringify(editorOutput.overlays) : null
-    const filtersJson = editorOutput?.filters ? JSON.stringify(editorOutput.filters) : null
-    await uploadStore.startUpload(uploadFile, {
-      title: title.trim(),
-      description: description.trim() || undefined,
-      channelId: channels[0]?.id || null,
-      visibility,
-      pricingModel: 'free', postType: 'general', tags: null,
-      stationId: null,
-      clipStart: editorOutput?.clipStart ?? null,
-      clipEnd: editorOutput?.clipEnd ?? null,
-      overlays: overlaysJson,
-      musicTrack: editorOutput?.musicTrack ?? null,
-      filters: filtersJson,
-      voiceoverBlob: editorOutput?.voiceoverBlob ?? null,
-    })
-    if (uploadStore.status !== 'error') { setStep('uploading'); setUploadedVideoId(uploadStore.videoId) }
+    const overlaysJson = (output?.overlays?.length ?? 0) > 0 ? JSON.stringify(output!.overlays) : null
+    const filtersJson = output?.filters ? JSON.stringify(output.filters) : null
+    const queue = [firstFile, ...files.slice(1)]
+    setTotalUploads(queue.length)
+    setStep('uploading')
+
+    for (let i = 0; i < queue.length; i++) {
+      setUploadIndex(i + 1)
+      const isEditedClip = i === 0 && hasEdits
+      await uploadStore.startUpload(queue[i], {
+        title: i === 0 ? title.trim() : `${title.trim()} (${i + 1})`,
+        description: description.trim() || undefined,
+        channelId: channels[0]?.id || null,
+        visibility,
+        pricingModel: 'free', postType: 'general', tags: null,
+        stationId: null,
+        // persist edit settings with the edited clip so nothing is ever lost,
+        // even when edits are already baked into the uploaded file
+        clipStart: isEditedClip && !editsBaked ? output?.clipStart ?? null : null,
+        clipEnd: isEditedClip && !editsBaked ? output?.clipEnd ?? null : null,
+        overlays: isEditedClip && !editsBaked ? overlaysJson : null,
+        musicTrack: isEditedClip && !editsBaked ? output?.musicTrack ?? null : null,
+        filters: isEditedClip && !editsBaked ? filtersJson : null,
+        voiceoverBlob: isEditedClip && !editsBaked ? output?.voiceoverBlob ?? null : null,
+      })
+      if (useUploadStore.getState().status === 'error') break
+      if (i === 0) setUploadedVideoId(useUploadStore.getState().videoId)
+      const settled = await waitForUploadSettled()
+      if (settled === 'error') break
+    }
   }
 
   // ─── Upload/Processing/Done screens ──────────────────────────────────
@@ -156,8 +203,18 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
               </div>
               {uploadStore.progress > 0 && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1 text-xs font-mono text-primary">{uploadStore.progress}%</div>}
             </div>
-            <h2 className="text-xl font-bold mb-2">Uploading...</h2>
-            <p className="text-zinc-400 text-sm">Your video is uploading.</p>
+            <h2 className="text-xl font-bold mb-2">
+              {totalUploads > 1 ? `Uploading video ${uploadIndex} of ${totalUploads}…` : 'Uploading...'}
+            </h2>
+            <p className="text-zinc-400 text-sm">
+              {totalUploads > 1 ? 'Each clip publishes as its own video.' : 'Your video is uploading.'}
+            </p>
+            {composeWarning && (
+              <p className="mt-3 max-w-sm rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">{composeWarning}</p>
+            )}
+            {uploadStore.status === 'error' && uploadStore.error && (
+              <p className="mt-3 max-w-sm rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-300">{uploadStore.error}</p>
+            )}
             <div className="flex gap-3 mt-6">
               <Button variant="outline" onClick={() => router.push('/')}>Browse</Button>
               <Button onClick={() => router.push('/studio/videos')}>My videos</Button>
@@ -171,7 +228,7 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             <h2 className="text-xl font-bold mb-2">Published!</h2>
             <p className="text-zinc-400 text-sm mb-6">{title} is live.</p>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setEditorOutput(null) }}>Upload another</Button>
+              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setEditorOutput(null); setTotalUploads(0); setUploadIndex(0); setComposeWarning(null) }}>Upload another</Button>
               {uploadedVideoId && <Button onClick={() => router.push(`/watch/${uploadedVideoId}`)}>View video <ArrowRight className="h-4 w-4 ml-1" /></Button>}
             </div>
           </>
@@ -187,8 +244,8 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
         <div {...getRootProps()} className={cn('border-2 border-dashed rounded-2xl cursor-pointer transition-all text-center py-24 px-6', isDragActive ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-zinc-700 hover:border-primary/50 hover:bg-zinc-900/30')}>
           <input {...getInputProps()} />
           <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4"><UploadCloud className="h-8 w-8 text-primary" /></div>
-          <p className="text-lg font-bold mb-1">{isDragActive ? 'Drop your video' : 'Drop a video to start'}</p>
-          <p className="text-zinc-500 text-sm mb-6">or click to browse files</p>
+          <p className="text-lg font-bold mb-1">{isDragActive ? 'Drop your videos' : 'Drop videos to start'}</p>
+          <p className="text-zinc-500 text-sm mb-6">or click to browse — select multiple clips to batch upload</p>
           <div className="flex flex-wrap justify-center gap-2 text-xs">
             {['MP4', 'MOV', 'WebM'].map(fmt => (<span key={fmt} className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 font-mono">{fmt}</span>))}
             <span className="text-zinc-700 mx-1">·</span><span className="text-zinc-600">Up to 20 GB</span>
@@ -200,24 +257,39 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
       {/* ─── Meta + Details + Collapsible Editor ─────────────────────── */}
       {step === 'meta' && (
         <div className="space-y-6">
-          {/* File summary bar */}
-          <div className="flex items-center gap-3 p-3 rounded-xl border bg-zinc-900/50">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <Film className="h-5 w-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-white">{files[0]?.name}</p>
-              <p className="text-xs text-zinc-500">{files[0] ? formatBytes(files[0].size) : ''}</p>
-            </div>
-            <Button
+          {/* File summary — supports multiple clips */}
+          <div className="space-y-1.5">
+            {files.map((f, i) => (
+              <div key={`${f.name}-${i}`} className="flex items-center gap-3 p-3 rounded-xl border bg-zinc-900/50">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Film className="h-5 w-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate text-white">{f.name}</p>
+                  <p className="text-xs text-zinc-500">
+                    {formatBytes(f.size)}
+                    {files.length > 1 && i === 0 && editorOutput ? ' · quick edits apply to this clip' : ''}
+                    {files.length > 1 && i > 0 ? ` · publishes as “${title.trim() || 'title'} (${i + 1})”` : ''}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-zinc-500 hover:text-red-400 shrink-0"
+                  onClick={() => removeFile(i)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-zinc-500 hover:text-red-400 shrink-0"
-              onClick={() => { setFiles([]); setEditorOutput(null); setStep('select') }}
+              onClick={openFilePicker}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-700 py-2 text-xs text-zinc-400 hover:border-primary/50 hover:text-zinc-200"
             >
-              <X className="h-4 w-4" />
-            </Button>
+              <Plus className="h-3.5 w-3.5" /> Add more clips
+            </button>
           </div>
 
           {/* Title + Visibility + Publish row */}
