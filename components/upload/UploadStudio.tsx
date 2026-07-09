@@ -318,6 +318,75 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             </button>
           </div>
 
+          {/* ── Post as: Video / Clip — big segmented selector ── */}
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setIsClip(false)}
+              aria-pressed={!isClip}
+              className={cn(
+                'flex items-start gap-3 rounded-2xl border-2 p-4 text-left transition-all',
+                !isClip
+                  ? 'border-primary bg-primary/10 shadow-[0_0_20px_-8px] shadow-primary/40'
+                  : 'border-zinc-800 hover:border-zinc-600 opacity-70 hover:opacity-100'
+              )}
+            >
+              <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', !isClip ? 'bg-primary/20' : 'bg-zinc-800')}>
+                <Film className={cn('h-5 w-5', !isClip ? 'text-primary' : 'text-zinc-400')} />
+              </div>
+              <div className="min-w-0">
+                <p className={cn('text-sm font-bold', !isClip ? 'text-white' : 'text-zinc-300')}>Video</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">Long-form, shows on your channel &amp; home feed</p>
+              </div>
+              {!isClip && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-primary" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsClip(true)}
+              aria-pressed={isClip}
+              className={cn(
+                'flex items-start gap-3 rounded-2xl border-2 p-4 text-left transition-all',
+                isClip
+                  ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_-8px] shadow-emerald-500/40'
+                  : 'border-zinc-800 hover:border-zinc-600 opacity-70 hover:opacity-100'
+              )}
+            >
+              <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', isClip ? 'bg-emerald-500/20' : 'bg-zinc-800')}>
+                <Clapperboard className={cn('h-5 w-5', isClip ? 'text-emerald-400' : 'text-zinc-400')} />
+              </div>
+              <div className="min-w-0">
+                <p className={cn('text-sm font-bold', isClip ? 'text-white' : 'text-zinc-300')}>Clip</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">Vertical short (≤{CLIP_MAX_SECONDS}s), lands in the Clips feed</p>
+              </div>
+              {isClip && <CheckCircle2 className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />}
+            </button>
+          </div>
+
+          {isClip && (
+            <div className="flex flex-wrap items-center gap-1.5 -mt-2">
+              <span className="mr-1 text-[11px] text-zinc-500">Category:</span>
+              {CLIP_CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setClipCategory(cat)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-[11px] capitalize transition-all',
+                    clipCategory === cat
+                      ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                      : 'border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300'
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+              {files.length > 1 && (
+                <span className="w-full text-[11px] text-zinc-600">All {files.length} files in this batch post as Clips.</span>
+              )}
+            </div>
+          )}
+
           {/* Title + Visibility + Publish row */}
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
@@ -350,40 +419,6 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
             rows={3}
             className="bg-zinc-900 border-zinc-700 text-white placeholder-zinc-600"
           />
-
-          {/* Post as Clip */}
-          <div className="rounded-xl border border-zinc-800 p-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setIsClip(!isClip)}
-                aria-pressed={isClip}
-                className={cn(
-                  'flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium transition-all',
-                  isClip
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-zinc-700 text-zinc-400 hover:border-primary/50 hover:text-zinc-200'
-                )}
-              >
-                <Clapperboard className="h-4 w-4" />
-                Clip — vertical short (≤{CLIP_MAX_SECONDS}s)
-              </button>
-              {isClip && (
-                <select
-                  value={clipCategory}
-                  onChange={e => setClipCategory(e.target.value as ClipCategory)}
-                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-white capitalize focus:outline-none focus:border-primary/50"
-                >
-                  {CLIP_CATEGORIES.map(cat => (
-                    <option key={cat} value={cat} className="capitalize">{cat}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-            {isClip && files.length > 1 && (
-              <p className="mt-2 text-[11px] text-zinc-500">All clips in this batch post as Clips</p>
-            )}
-          </div>
 
           {/* Collapsible Edit video section */}
           <div className="rounded-xl border border-zinc-800 overflow-hidden">

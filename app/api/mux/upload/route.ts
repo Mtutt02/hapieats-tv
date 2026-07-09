@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { video as muxVideo } from '@/lib/mux'
 import { CLIP_CATEGORIES } from '@/lib/clips/types'
+import { insertVideoTolerant } from '@/lib/videos/tolerant-insert'
 
 export async function POST(req: NextRequest) {
   try {
@@ -87,33 +88,22 @@ export async function POST(req: NextRequest) {
       edit_voiceover_url: voiceoverUrl ?? null,
     }
 
-    // Try with clip fields first; if the migration hasn't run yet (missing
-    // column → Postgres 42703), retry without them so uploads never break.
-    let { data: videoRecord, error } = await serviceClient
-      .from('videos')
-      .insert({ ...baseRow, is_clip: wantsClip, clip_category: safeClipCategory })
-      .select('id')
-      .single()
+    // Tolerant insert — automatically drops any column the live DB doesn't
+    // have yet (pending migrations) so uploads never break on schema drift.
+    const result = await insertVideoTolerant(serviceClient, {
+      ...baseRow,
+      is_clip: wantsClip,
+      clip_category: safeClipCategory,
+    })
 
-    if (error && (error.code === '42703' || /is_clip|clip_category/.test(error.message ?? ''))) {
-      const retry = await serviceClient
-        .from('videos')
-        .insert(baseRow)
-        .select('id')
-        .single()
-      videoRecord = retry.data
-      error = retry.error
-    }
-
-    if (error || !videoRecord) {
-      console.error('DB error:', error)
+    if ('error' in result) {
       return NextResponse.json({ error: 'Failed to create video record' }, { status: 500 })
     }
 
     return NextResponse.json({
       uploadUrl: upload.url,
       uploadId: upload.id,
-      videoId: videoRecord.id,
+      videoId: result.id,
     })
   } catch (err: unknown) {
     const e = err as { message?: string; status?: number; statusCode?: number }
