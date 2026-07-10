@@ -23,6 +23,7 @@ export interface UploadMeta {
   voiceoverBlob?: Blob | null
   isClip?: boolean
   clipCategory?: string | null
+  coverDataUrl?: string | null // composed 16:9 cover (data URL)
 }
 
 interface UploadStore {

@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl, isClip, clipCategory } = body
+    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl, isClip, clipCategory, coverDataUrl } = body
 
     // Clips — validate the category against the shared allowed list
     const wantsClip = isClip === true
@@ -81,6 +81,36 @@ export async function POST(req: NextRequest) {
       },
     })
 
+    // Store the custom 16:9 cover (if provided) — a chosen frame or uploaded
+    // image already composed to 1280×720 client-side. Fills thumbnail_url so
+    // it shows everywhere; falls back to Mux auto-thumbnails when absent.
+    let coverUrl: string | null = null
+    if (typeof coverDataUrl === 'string' && coverDataUrl.startsWith('data:image/')) {
+      try {
+        const m = coverDataUrl.match(/^data:(image\/(png|jpeg|jpg|webp));base64,(.+)$/)
+        if (m) {
+          const contentType = m[1]
+          const ext = contentType.split('/')[1].replace('jpeg', 'jpg')
+          const coverBytes = Buffer.from(m[3], 'base64')
+          if (coverBytes.length <= 8 * 1024 * 1024) {
+            const { data: buckets } = await serviceClient.storage.listBuckets()
+            if (!buckets?.find(b => b.name === 'covers')) {
+              await serviceClient.storage.createBucket('covers', { public: true })
+            }
+            const coverPath = `${user.id}/${Date.now()}.${ext}`
+            const { error: coverErr } = await serviceClient.storage
+              .from('covers')
+              .upload(coverPath, coverBytes, { contentType, upsert: true })
+            if (!coverErr) {
+              coverUrl = serviceClient.storage.from('covers').getPublicUrl(coverPath).data.publicUrl
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('cover upload failed, using auto thumbnail:', e)
+      }
+    }
+
     // Create video record in Supabase
     const baseRow = {
       title,
@@ -95,6 +125,7 @@ export async function POST(req: NextRequest) {
       post_type: postType ?? (channelId ? 'channel' : 'general'),
       tags: tags ?? null,
       station_id: stationId ?? null,
+      thumbnail_url: coverUrl,
       clip_start: clipStart ?? null,
       clip_end: clipEnd ?? null,
       edit_overlays: overlays ?? null,

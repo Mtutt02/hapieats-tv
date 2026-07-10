@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import QuickEdit from '@/components/upload/QuickEdit'
+import CoverPicker from '@/components/upload/CoverPicker'
 import type { EditorOutput } from '@/components/editor/types'
 import { useUploadStore, type UploadStatus } from '@/lib/upload-store'
 import { composeFinalVideo } from '@/lib/video-compositor'
@@ -88,6 +89,7 @@ export default function UploadStudio({ channels, communityChannels = [], station
   const [isClip, setIsClip] = useState(false)
   const [clipCategory, setClipCategory] = useState<ClipCategory>('food')
   const [clipLengthError, setClipLengthError] = useState<string | null>(null)
+  const [coverDataUrl, setCoverDataUrl] = useState<string | null>(null)
   const probedFileRef = useRef<File | null>(null)
 
   // Auto-enable "Post as Clip" when the first selected file is portrait and short.
@@ -236,6 +238,8 @@ export default function UploadStudio({ channels, communityChannels = [], station
         voiceoverBlob: isEditedClip && !editsBaked ? output?.voiceoverBlob ?? null : null,
         isClip,
         clipCategory: isClip ? clipCategory : null,
+        // custom cover only applies to the first (primary) file
+        coverDataUrl: i === 0 ? coverDataUrl : null,
       })
       if (useUploadStore.getState().status === 'error') break
       if (i === 0) setUploadedVideoId(useUploadStore.getState().videoId)
@@ -305,7 +309,7 @@ export default function UploadStudio({ channels, communityChannels = [], station
             <h2 className="text-xl font-bold mb-2">Published!</h2>
             <p className="text-zinc-400 text-sm mb-6">{title} is live.</p>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setEditorOutput(null); setTotalUploads(0); setUploadIndex(0); setComposeWarning(null) }}>Upload another</Button>
+              <Button variant="outline" onClick={() => { setFiles([]); setStep('select'); setTitle(''); setDescription(''); setEditorOutput(null); setTotalUploads(0); setUploadIndex(0); setComposeWarning(null); setCoverDataUrl(null) }}>Upload another</Button>
               {uploadedVideoId && <Button onClick={() => router.push(`/watch/${uploadedVideoId}`)}>View video <ArrowRight className="h-4 w-4 ml-1" /></Button>}
             </div>
           </>
@@ -525,6 +529,11 @@ export default function UploadStudio({ channels, communityChannels = [], station
             rows={3}
             className="bg-zinc-900 border-zinc-700 text-white placeholder-zinc-600"
           />
+
+          {/* Cover thumbnail — only for landscape Videos (clips use their own vertical frame) */}
+          {!isClip && (
+            <CoverPicker file={files[0] ?? null} onCoverChange={setCoverDataUrl} />
+          )}
 
           {/* Collapsible Edit video section */}
           <div className="rounded-xl border border-zinc-800 overflow-hidden">
