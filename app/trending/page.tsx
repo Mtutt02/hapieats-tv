@@ -25,6 +25,7 @@ export default async function TrendingPage() {
     .select('id, title, thumbnail_url, view_count, like_count, duration, created_at, channel:channels(name, slug), creator:profiles(username, display_name)')
     .eq('status', 'ready')
     .eq('visibility', 'public')
+    .neq('is_clip', true)
     .order('view_count', { ascending: false })
     .limit(24)
 

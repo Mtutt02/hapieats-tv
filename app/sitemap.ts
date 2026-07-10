@@ -32,6 +32,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .eq('status', 'ready')
       .eq('visibility', 'public')
       .eq('is_flagged', false)
+      .neq('is_clip', true)
       .order('created_at', { ascending: false })
       .limit(500)
 

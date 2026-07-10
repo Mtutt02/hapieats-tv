@@ -36,6 +36,7 @@ async function getStationVideos(stationId: string) {
     `)
     .eq('station_id', stationId)
     .eq('status', 'ready')
+    .neq('is_clip', true)
     .order('created_at', { ascending: false })
     .limit(48)
   return data ?? []

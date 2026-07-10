@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
       .or(`title.ilike.%${trimmed}%,description.ilike.%${trimmed}%`)
       .eq('status', 'ready')
       .eq('visibility', 'public')
+      .neq('is_clip', true)
       .limit(20)
 
     if (error) {

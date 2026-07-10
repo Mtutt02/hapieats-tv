@@ -56,6 +56,7 @@ export default async function ChannelPage({ params }: PageProps) {
     .eq('creator_id', profile.id)
     .eq('status', 'ready')
     .eq('visibility', 'public')
+    .neq('is_clip', true)
     .order('published_at', { ascending: false })
 
   // Check if current user is subscribed

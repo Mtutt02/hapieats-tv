@@ -274,6 +274,7 @@ export default async function WatchPage({ params }: PageProps) {
     .eq('status', 'ready')
     .eq('visibility', 'public')
     .neq('id', video.id)
+    .neq('is_clip', true)
     .order('published_at', { ascending: false })
     .limit(8)
 
@@ -294,6 +295,7 @@ export default async function WatchPage({ params }: PageProps) {
         .eq('visibility', 'public')
         .neq('id', video.id)
         .neq('creator_id', video.creator_id)
+        .neq('is_clip', true)
         .order('view_count', { ascending: false })
         .limit(8)
     : { data: [] }

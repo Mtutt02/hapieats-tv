@@ -24,6 +24,7 @@ export default async function HomePage() {
       .eq('status', 'ready')
       .eq('visibility', 'public')
       .neq('post_type', 'channel')
+      .neq('is_clip', true)
       .order('published_at', { ascending: false })
       .limit(24),
 

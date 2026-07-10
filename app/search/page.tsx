@@ -103,6 +103,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         .or(`title.ilike.%${safeQ}%,description.ilike.%${safeQ}%`)
         .eq('status', 'ready')
         .eq('visibility', 'public')
+        .neq('is_clip', true)
         .limit(20)
 
       videos = (data as unknown as Video[]) ?? []
