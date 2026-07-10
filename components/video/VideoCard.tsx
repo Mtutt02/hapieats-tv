@@ -91,7 +91,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
     return (
       <Link href={`/watch/${video.id}`} className="group flex gap-2 items-start">
         <div
-          className="relative w-28 aspect-video rounded-lg overflow-hidden bg-muted flex-shrink-0"
+          className="relative w-28 aspect-video rounded-lg overflow-hidden bg-black flex-shrink-0"
           {...mouseHandlers}
           {...touchHandlers}
         >
@@ -100,7 +100,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
             alt={video.title}
             fill
             className={cn(
-              'object-cover transition-all duration-300',
+              'object-contain transition-all duration-300',
               hovered && video.mux_playback_id ? 'opacity-0' : 'opacity-100',
               hovered && !video.mux_playback_id ? 'scale-105' : 'scale-100',
             )}
@@ -160,7 +160,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
   return (
     <Link href={`/watch/${video.id}`} className="group block">
       <div
-        className="relative aspect-video rounded-xl overflow-hidden bg-muted mb-3"
+        className="relative aspect-video rounded-xl overflow-hidden bg-black mb-3"
         {...mouseHandlers}
         {...touchHandlers}
       >
@@ -170,7 +170,7 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
           alt={video.title}
           fill
           className={cn(
-            'object-cover transition-all duration-300',
+            'object-contain transition-all duration-300',
             hovered && video.mux_playback_id ? 'opacity-0 scale-100' : '',
             hovered && !video.mux_playback_id ? 'scale-105' : 'scale-100',
           )}

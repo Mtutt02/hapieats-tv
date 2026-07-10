@@ -97,7 +97,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
     <Link href={`/watch/${video.id}`} className="group block">
       <div
         className={cn(
-          'relative aspect-video rounded-xl overflow-hidden bg-muted mb-2.5',
+          'relative aspect-video rounded-xl overflow-hidden bg-black mb-2.5',
           'transition-all duration-300',
           !isTouch && 'group-hover:ring-2 group-hover:ring-primary/60 group-hover:shadow-[0_0_20px_rgba(249,115,22,0.18)]',
           active && 'ring-2 ring-primary/60',
@@ -113,7 +113,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
           alt={video.title}
           fill
           className={cn(
-            'object-cover transition-all duration-500',
+            'object-contain transition-all duration-500',
             active && (video.videoUrl || video.muxPlaybackId) ? 'opacity-0 scale-100' : 'opacity-100',
             !active && !isTouch ? 'group-hover:scale-[1.03]' : '',
           )}
@@ -124,7 +124,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
             <video
               src={video.videoUrl}
               autoPlay muted loop playsInline
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
           </div>
         )}
@@ -177,7 +177,7 @@ function RealVideoCard({ video, isTouch }: { video: Video; isTouch: boolean }) {
     <Link href={`/watch/${video.id}`} className="group block">
       <div
         className={cn(
-          'relative aspect-video rounded-xl overflow-hidden bg-muted mb-2.5',
+          'relative aspect-video rounded-xl overflow-hidden bg-black mb-2.5',
           'transition-all duration-300',
           !isTouch && 'group-hover:ring-2 group-hover:ring-primary/60 group-hover:shadow-[0_0_20px_rgba(249,115,22,0.18)]',
           active && 'ring-2 ring-primary/60',
@@ -193,7 +193,7 @@ function RealVideoCard({ video, isTouch }: { video: Video; isTouch: boolean }) {
           alt={video.title}
           fill
           className={cn(
-            'object-cover transition-all duration-500',
+            'object-contain transition-all duration-500',
             active && video.mux_playback_id ? 'opacity-0' : 'opacity-100',
             !active && !isTouch ? 'group-hover:scale-[1.03]' : '',
           )}

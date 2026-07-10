@@ -12,179 +12,106 @@ export default function OGImage() {
         style={{
           width: 1200,
           height: 630,
-          background: '#09090b',
+          background: '#0b0d11',
           display: 'flex',
-          flexDirection: 'row',
+          flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 90,
           position: 'relative',
           overflow: 'hidden',
           fontFamily: 'sans-serif',
         }}
       >
-        {/* Subtle emerald glow behind the mark */}
+        {/* Background glow */}
         <div
           style={{
             position: 'absolute',
-            top: 100,
-            left: 60,
-            width: 520,
-            height: 430,
-            background: 'radial-gradient(ellipse, rgba(16,185,129,0.18) 0%, transparent 70%)',
+            top: -120,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 700,
+            height: 400,
+            background: 'radial-gradient(ellipse, rgba(34,211,238,0.16) 0%, transparent 70%)',
             borderRadius: '50%',
           }}
         />
 
-        {/* Bottom gradient strip — emerald → teal */}
+        {/* Bottom gradient strip */}
         <div
           style={{
             position: 'absolute',
             bottom: 0,
             left: 0,
             right: 0,
-            height: 5,
-            background: 'linear-gradient(90deg, #059669, #10b981, #2dd4bf, #10b981, #059669)',
+            height: 4,
+            background: 'linear-gradient(90deg, #0891b2, #22d3ee, #67e8f9, #22d3ee, #0891b2)',
           }}
         />
 
-        {/* Left: TV + HE mark */}
+        {/* Logo icon — fork + play on cyan */}
         <div
           style={{
-            width: 320,
-            height: 320,
-            position: 'relative',
+            width: 80,
+            height: 80,
+            background: 'rgba(34,211,238,0.12)',
+            border: '2px solid rgba(34,211,238,0.4)',
+            borderRadius: 20,
             display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 28,
           }}
         >
-          {/* Left antenna */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 18,
-              left: 130,
-              width: 10,
-              height: 52,
-              background: '#10b981',
-              borderRadius: 5,
-              transform: 'rotate(-32deg)',
-            }}
-          />
-          {/* Right antenna */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 18,
-              left: 180,
-              width: 10,
-              height: 52,
-              background: '#10b981',
-              borderRadius: 5,
-              transform: 'rotate(32deg)',
-            }}
-          />
-          {/* TV body — gradient screen with HE */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 68,
-              left: 30,
-              width: 260,
-              height: 190,
-              borderRadius: 36,
-              background: 'linear-gradient(135deg, #10b981 0%, #0d9488 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <div
-              style={{
-                fontSize: 96,
-                fontWeight: 900,
-                color: '#ffffff',
-                lineHeight: 1,
-                letterSpacing: '-3px',
-              }}
-            >
-              HE
-            </div>
-          </div>
-          {/* Left foot */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 258,
-              left: 85,
-              width: 16,
-              height: 26,
-              background: '#10b981',
-              borderRadius: 6,
-            }}
-          />
-          {/* Right foot */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 258,
-              left: 219,
-              width: 16,
-              height: 26,
-              background: '#10b981',
-              borderRadius: 6,
-            }}
-          />
+          <div style={{ fontSize: 52, fontWeight: 900, color: '#22d3ee', lineHeight: 1 }}>H</div>
         </div>
 
-        {/* Right: wordmark + tagline */}
+        {/* Brand name — matching logo wordmark */}
         <div
           style={{
+            fontSize: 68,
+            fontWeight: 800,
+            letterSpacing: '-2px',
+            lineHeight: 1,
+            marginBottom: 16,
             display: 'flex',
-            flexDirection: 'column',
-            gap: 20,
+            alignItems: 'center',
+            gap: 0,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-            }}
-          >
+          <span style={{ color: '#22d3ee' }}>HAPI</span>
+          <span style={{ color: '#ffffff' }}>EATS</span>
+          <span style={{ color: '#f0147e', fontStyle: 'italic', fontFamily: 'Georgia, serif' }}> TV</span>
+        </div>
+
+        {/* Tagline */}
+        <div
+          style={{
+            fontSize: 26,
+            color: '#94a3b8',
+            letterSpacing: '0.5px',
+            marginBottom: 48,
+          }}
+        >
+          Good Food. Real People. Real Stories.
+        </div>
+
+        {/* Feature pills */}
+        <div style={{ display: 'flex', gap: 16 }}>
+          {['🎬 Watch', '📡 Live Streams', '👨‍🍳 Food Creators', '🍕 Free & Premium'].map(label => (
             <div
+              key={label}
               style={{
-                fontSize: 84,
-                fontWeight: 900,
-                letterSpacing: '-3px',
-                lineHeight: 1,
-                color: '#ffffff',
+                background: 'rgba(34,211,238,0.08)',
+                border: '1px solid rgba(34,211,238,0.25)',
+                borderRadius: 100,
+                padding: '10px 22px',
+                fontSize: 18,
+                color: '#a5f3fc',
               }}
             >
-              HapiEats
+              {label}
             </div>
-            <div
-              style={{
-                fontSize: 84,
-                fontWeight: 900,
-                letterSpacing: '-3px',
-                lineHeight: 1,
-                marginLeft: 20,
-                backgroundImage: 'linear-gradient(90deg, #10b981, #2dd4bf)',
-                backgroundClip: 'text',
-                color: 'transparent',
-              }}
-            >
-              TV
-            </div>
-          </div>
-          <div
-            style={{
-              fontSize: 30,
-              color: '#a1a1aa',
-              letterSpacing: '0.5px',
-            }}
-          >
-            Good Food. Real People. Real Stories.
-          </div>
+          ))}
         </div>
 
         {/* Domain watermark */}
@@ -194,7 +121,7 @@ export default function OGImage() {
             bottom: 24,
             right: 36,
             fontSize: 18,
-            color: 'rgba(255,255,255,0.25)',
+            color: 'rgba(255,255,255,0.2)',
             letterSpacing: '0.5px',
           }}
         >

@@ -11,90 +11,28 @@ export default function AppleIcon() {
         style={{
           width: 180,
           height: 180,
-          background: '#09090b',
+          background: 'linear-gradient(145deg, #0b0d11 0%, #0e1a26 100%)',
           borderRadius: 40,
-          position: 'relative',
           display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 0,
         }}
       >
-        {/* Left antenna */}
+        {/* Cyan "H" */}
         <div
           style={{
-            position: 'absolute',
-            top: 22,
-            left: 74,
-            width: 5,
-            height: 22,
-            background: '#10b981',
-            borderRadius: 3,
-            transform: 'rotate(-32deg)',
-          }}
-        />
-        {/* Right antenna */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 22,
-            left: 101,
-            width: 5,
-            height: 22,
-            background: '#10b981',
-            borderRadius: 3,
-            transform: 'rotate(32deg)',
-          }}
-        />
-        {/* TV body — emerald→teal gradient screen with HE */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 46,
-            left: 34,
-            width: 112,
-            height: 82,
-            borderRadius: 18,
-            background: 'linear-gradient(135deg, #10b981 0%, #0d9488 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            fontFamily: 'sans-serif',
+            fontWeight: 900,
+            fontSize: 110,
+            color: '#22d3ee',
+            lineHeight: 1,
+            letterSpacing: '-4px',
           }}
         >
-          <div
-            style={{
-              fontFamily: 'sans-serif',
-              fontWeight: 900,
-              fontSize: 42,
-              color: '#ffffff',
-              lineHeight: 1,
-              letterSpacing: '-1px',
-            }}
-          >
-            HE
-          </div>
+          H
         </div>
-        {/* Left foot */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 128,
-            left: 58,
-            width: 7,
-            height: 12,
-            background: '#10b981',
-            borderRadius: 3,
-          }}
-        />
-        {/* Right foot */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 128,
-            left: 115,
-            width: 7,
-            height: 12,
-            background: '#10b981',
-            borderRadius: 3,
-          }}
-        />
       </div>
     ),
     { ...size }
