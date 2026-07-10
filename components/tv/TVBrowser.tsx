@@ -498,6 +498,19 @@ export default function TVBrowser({ channels }: Props) {
   // offset. Only recomputed on channel tune-in (never mid-session) to avoid
   // playback jumps.
   const [playback, setPlayback] = useState<{ index: number; offset: number }>({ index: 0, offset: 0 })
+  const [showIntro, setShowIntro] = useState(false)
+
+  // First-visit intro — explains how the TV works
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem('he-tv-intro-seen')) setShowIntro(true)
+    } catch { /* storage unavailable */ }
+  }, [])
+
+  const dismissIntro = () => {
+    setShowIntro(false)
+    try { localStorage.setItem('he-tv-intro-seen', '1') } catch { /* ignore */ }
+  }
 
   const containerRef = useRef<HTMLDivElement>(null)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -761,6 +774,42 @@ export default function TVBrowser({ channels }: Props) {
           open={remoteOpen}
           onToggle={() => setRemoteOpen(v => !v)}
         />
+      )}
+
+      {/* ── FIRST-VISIT INTRO ── */}
+      {showIntro && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/75 p-4"
+          role="dialog"
+          aria-label="How HapiEats TV works"
+          onClick={dismissIntro}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-950 p-6 text-center shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 text-3xl" aria-hidden>
+              📺
+            </div>
+            <h2 className="text-lg font-black tracking-tight text-white">Welcome to HapiEats TV</h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+              Every channel is a station broadcasting <b className="text-zinc-200">nonstop</b> —
+              tune in and the show is already on, just like real TV. Videos play back-to-back
+              continuously, so there&apos;s nothing to pick and nothing to queue.
+            </p>
+            <div className="mt-4 space-y-1.5 text-left text-xs text-zinc-400">
+              <p><b className="text-zinc-200">Flip channels</b> — remote, ↑/↓ arrow keys, or type a channel number</p>
+              <p><b className="text-zinc-200">See what&apos;s on</b> — press G for the channel guide</p>
+              <p><b className="text-zinc-200">Sit back</b> — when one video ends, the next starts automatically</p>
+            </div>
+            <button
+              onClick={dismissIntro}
+              className="mt-5 w-full rounded-xl bg-white py-2.5 text-sm font-bold text-black transition hover:bg-zinc-200"
+            >
+              Set the channel and enjoy
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
