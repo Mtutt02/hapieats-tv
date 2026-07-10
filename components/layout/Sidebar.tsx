@@ -8,7 +8,7 @@ import {
   Home, Radio, Rss, TrendingUp, Tv, BookOpen, GraduationCap,
   UploadCloud, Clapperboard, LayoutDashboard, DollarSign,
   Wallet, Target, Coins, Trophy, Settings, HelpCircle,
-  BadgeDollarSign, X, ChevronDown, Zap,
+  BadgeDollarSign, X, ChevronDown, Zap, ShieldCheck,
 } from 'lucide-react'
 import Logo from './Logo'
 import { cn } from '@/lib/utils'
@@ -150,12 +150,25 @@ function NavSection({
 
 export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [isStaff, setIsStaff] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setIsLoggedIn(!!user))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setIsLoggedIn(!!s?.user))
-    return () => subscription.unsubscribe()
+    let alive = true
+    const loadRole = async (userId: string | null) => {
+      if (!userId) { if (alive) setIsStaff(false); return }
+      const { data } = await supabase.from('profiles').select('role').eq('id', userId).single()
+      if (alive) setIsStaff(['admin', 'superadmin', 'moderator'].includes(data?.role ?? ''))
+    }
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setIsLoggedIn(!!user)
+      loadRole(user?.id ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+      setIsLoggedIn(!!s?.user)
+      loadRole(s?.user?.id ?? null)
+    })
+    return () => { alive = false; subscription.unsubscribe() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -187,6 +200,9 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
         {ALWAYS_VISIBLE.map(item => (
           <NavLink key={item.href} item={item} onClose={onClose} />
         ))}
+        {isStaff && (
+          <NavLink item={{ href: '/admin', icon: ShieldCheck, label: 'Admin Dashboard' }} onClose={onClose} />
+        )}
       </nav>
 
       <div className="my-2 border-t border-border/60" />
