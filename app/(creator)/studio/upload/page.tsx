@@ -20,9 +20,11 @@ export default async function UploadPage({ searchParams }: PageProps) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login?redirect=/studio/upload')
 
-  const [{ data: channels }, { data: profile }] = await Promise.all([
+  const [{ data: channels }, { data: profile }, { data: communityChannels }, { data: stations }] = await Promise.all([
     supabase.from('channels').select('id, name, slug').eq('creator_id', user.id),
     supabase.from('profiles').select('is_creator').eq('id', user.id).single(),
+    supabase.from('channels').select('id, name, slug').eq('open_posting', true).neq('creator_id', user.id),
+    supabase.from('stations').select('id, name, icon').order('name'),
   ])
 
   let preselectedStation: { id: string; name: string } | null = null
@@ -56,6 +58,8 @@ export default async function UploadPage({ searchParams }: PageProps) {
 
         <UploadStudio
           channels={channels ?? []}
+          communityChannels={communityChannels ?? []}
+          stations={stations ?? []}
           preselectedStation={preselectedStation}
           isCreator={profile?.is_creator ?? false}
         />

@@ -5,6 +5,12 @@ import { cn } from '@/lib/utils'
 import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronDown, Gamepad2, PictureInPicture2 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+export interface TVPlaylistItem {
+  title: string
+  muxPlaybackId: string
+  duration: number | null // seconds; null → FALLBACK_DURATION
+}
+
 export interface TVChannel {
   number: number
   name: string
@@ -15,6 +21,7 @@ export interface TVChannel {
   isLive?: boolean
   currentTitle: string
   category: string
+  playlist?: TVPlaylistItem[]
 }
 
 interface Props {
@@ -34,8 +41,49 @@ function findVideoElement(container: HTMLElement): HTMLVideoElement | null {
   return null
 }
 
+// ─── "Live broadcast" scheduling ──────────────────────────────────────────────
+// Playback position is deterministic: totalDuration = sum of video durations,
+// offset = wall-clock seconds modulo totalDuration, then walk the playlist to
+// find the current video + seek position. Everyone tuning in at the same
+// moment sees the same "broadcast"; returning later shows different content.
+const FALLBACK_DURATION = 300 // seconds, used when a video has no duration
+
+function itemDuration(item: TVPlaylistItem): number {
+  return item.duration && item.duration > 0 ? item.duration : FALLBACK_DURATION
+}
+
+function computeSchedule(playlist: TVPlaylistItem[]): { index: number; offset: number } {
+  if (!playlist.length) return { index: 0, offset: 0 }
+  const total = playlist.reduce((sum, it) => sum + itemDuration(it), 0)
+  let t = (Date.now() / 1000) % total
+  for (let i = 0; i < playlist.length; i++) {
+    const d = itemDuration(playlist[i])
+    if (t < d) return { index: i, offset: Math.floor(t) }
+    t -= d
+  }
+  return { index: 0, offset: 0 }
+}
+
+// NOW / NEXT titles for a channel per the deterministic schedule (used by the
+// EPG guide; the tuned channel's OSD uses actual playback state instead).
+function channelNowNext(ch: TVChannel): { now: string; next?: string } {
+  if (ch.playlist && ch.playlist.length > 0) {
+    const { index } = computeSchedule(ch.playlist)
+    return {
+      now: ch.playlist[index].title,
+      next: ch.playlist.length > 1 ? ch.playlist[(index + 1) % ch.playlist.length].title : undefined,
+    }
+  }
+  return { now: ch.currentTitle }
+}
+
 // ─── On-Screen Display ────────────────────────────────────────────────────────
-function OSD({ channel, visible }: { channel: TVChannel; visible: boolean }) {
+function OSD({ channel, visible, nowTitle, nextTitle }: {
+  channel: TVChannel
+  visible: boolean
+  nowTitle?: string
+  nextTitle?: string
+}) {
   return (
     <div className={cn(
       'absolute bottom-0 left-0 right-0 z-20 transition-all duration-500 pointer-events-none',
@@ -60,7 +108,10 @@ function OSD({ channel, visible }: { channel: TVChannel; visible: boolean }) {
               <span className="text-3xl leading-none">{channel.icon}</span>
               <div>
                 <p className="text-white font-bold text-lg leading-tight">{channel.name}</p>
-                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">{channel.currentTitle}</p>
+                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">{nowTitle ?? channel.currentTitle}</p>
+                {nextTitle && (
+                  <p className="text-white/35 text-xs line-clamp-1 mt-0.5">Up next: {nextTitle}</p>
+                )}
               </div>
             </div>
           </div>
@@ -119,6 +170,7 @@ function ChannelGuide({
       >
         {channels.map(ch => {
           const isActive = ch.number === currentNumber
+          const { now, next } = channelNowNext(ch)
           return (
             <button
               key={ch.number}
@@ -148,7 +200,16 @@ function ChannelGuide({
                   {ch.name}
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-500 line-clamp-2 leading-snug">{ch.currentTitle}</p>
+              <p className="text-[11px] text-zinc-500 line-clamp-1 leading-snug">
+                <span className={cn('font-bold', isActive ? 'text-primary/80' : 'text-zinc-400')}>NOW </span>
+                {now}
+              </p>
+              {next && (
+                <p className="text-[11px] text-zinc-600 line-clamp-1 leading-snug mt-0.5">
+                  <span className="font-bold text-zinc-500">NEXT </span>
+                  {next}
+                </p>
+              )}
             </button>
           )
         })}
@@ -433,11 +494,26 @@ export default function TVBrowser({ channels }: Props) {
   const [remoteOpen, setRemoteOpen] = useState(true)
   const [transitioning, setTransitioning] = useState(false)
   const [transitionNum, setTransitionNum] = useState<number | null>(null)
+  // Playlist playback state — index into current channel's playlist + seek
+  // offset. Only recomputed on channel tune-in (never mid-session) to avoid
+  // playback jumps.
+  const [playback, setPlayback] = useState<{ index: number; offset: number }>({ index: 0, offset: 0 })
 
   const containerRef = useRef<HTMLDivElement>(null)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const channel = channels[currentIndex]
+  const playlist = channel?.playlist
+  const nowItem = playlist && playlist.length > 0 ? playlist[playback.index % playlist.length] : null
+  const nextItem = playlist && playlist.length > 1 ? playlist[(playback.index + 1) % playlist.length] : null
+
+  // Initial tune-in: compute the broadcast schedule once on mount (client-only
+  // so SSR and hydration render the same frame)
+  useEffect(() => {
+    const pl = channels[0]?.playlist
+    if (pl && pl.length > 0) setPlayback(computeSchedule(pl))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── OSD ──
   const showOSDTemporarily = useCallback(() => {
@@ -454,14 +530,25 @@ export default function TVBrowser({ channels }: Props) {
   // ── Channel switching ──
   const switchChannel = useCallback((newIndex: number) => {
     const clamped = Math.max(0, Math.min(channels.length - 1, newIndex))
+    if (clamped === currentIndex) return // already tuned — don't recompute schedule
     setTransitioning(true)
     setTransitionNum(channels[clamped]?.number ?? null)
     setTimeout(() => {
+      // Tune-in: land on the deterministic "live broadcast" position
+      const pl = channels[clamped]?.playlist
+      setPlayback(pl && pl.length > 0 ? computeSchedule(pl) : { index: 0, offset: 0 })
       setCurrentIndex(clamped)
       setTransitioning(false)
       setTransitionNum(null)
     }, 300)
-  }, [channels])
+  }, [channels, currentIndex])
+
+  // ── Playlist auto-advance (video ended → next item, loop at end) ──
+  const advancePlaylist = useCallback(() => {
+    const pl = channels[currentIndex]?.playlist
+    if (!pl || pl.length === 0) return
+    setPlayback(p => ({ index: (p.index + 1) % pl.length, offset: 0 }))
+  }, [channels, currentIndex])
 
   const channelUp = useCallback(() => switchChannel((currentIndex + 1) % channels.length), [currentIndex, channels.length, switchChannel])
   const channelDown = useCallback(() => switchChannel((currentIndex - 1 + channels.length) % channels.length), [currentIndex, channels.length, switchChannel])
@@ -587,7 +674,15 @@ export default function TVBrowser({ channels }: Props) {
 
           {/* Video content */}
           <div className={cn('absolute inset-0 transition-opacity duration-300', transitioning ? 'opacity-0' : 'opacity-100')}>
-            {channel?.videoUrl ? (
+            {nowItem && playlist ? (
+              <MuxPlayerWrapper
+                key={`${channel?.number}-${playback.index % playlist.length}`}
+                playbackId={nowItem.muxPlaybackId}
+                muted={muted}
+                startTime={playback.offset}
+                onEnded={advancePlaylist}
+              />
+            ) : channel?.videoUrl ? (
               <video
                 key={channel.videoUrl}
                 src={channel.videoUrl}
@@ -597,10 +692,13 @@ export default function TVBrowser({ channels }: Props) {
             ) : channel?.muxPlaybackId ? (
               <MuxPlayerWrapper playbackId={channel.muxPlaybackId} muted={muted} isLive={channel.isLive} />
             ) : (
-              <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4">
+              <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4 px-6 text-center">
                 <span className="text-7xl">{channel?.icon}</span>
                 <p className="text-white font-bold text-2xl">{channel?.name}</p>
                 <p className="text-zinc-500 text-sm">{channel?.description}</p>
+                <p className="text-zinc-600 text-xs font-mono tracking-wide">
+                  No programming yet — be the first to post to {channel?.name}
+                </p>
               </div>
             )}
           </div>
@@ -615,7 +713,14 @@ export default function TVBrowser({ channels }: Props) {
           )}
 
           {/* OSD */}
-          {channel && <OSD channel={channel} visible={showOSD && !showGuide && !transitioning} />}
+          {channel && (
+            <OSD
+              channel={channel}
+              visible={showOSD && !showGuide && !transitioning}
+              nowTitle={nowItem?.title}
+              nextTitle={nextItem?.title}
+            />
+          )}
 
           {/* PiP badge */}
           {isPiP && (
@@ -662,7 +767,13 @@ export default function TVBrowser({ channels }: Props) {
 }
 
 // ─── Lazy Mux wrapper ─────────────────────────────────────────────────────────
-function MuxPlayerWrapper({ playbackId, muted, isLive }: { playbackId: string; muted: boolean; isLive?: boolean }) {
+function MuxPlayerWrapper({ playbackId, muted, isLive, startTime, onEnded }: {
+  playbackId: string
+  muted: boolean
+  isLive?: boolean
+  startTime?: number
+  onEnded?: () => void
+}) {
   const [MuxPlayer, setMuxPlayer] = useState<React.ComponentType<Record<string, unknown>> | null>(null)
   useEffect(() => {
     import('@mux/mux-player-react').then(m => setMuxPlayer(() => m.default))
@@ -673,8 +784,10 @@ function MuxPlayerWrapper({ playbackId, muted, isLive }: { playbackId: string; m
       playbackId={playbackId}
       muted={muted}
       autoPlay
-      loop={!isLive}
+      loop={onEnded ? false : !isLive}
       streamType={isLive ? 'live' : 'on-demand'}
+      startTime={startTime && startTime > 0 ? startTime : undefined}
+      onEnded={onEnded}
       style={{
         '--controls': 'none',
         '--media-object-fit': 'cover',

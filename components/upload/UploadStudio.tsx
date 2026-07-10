@@ -18,13 +18,17 @@ import { composeFinalVideo } from '@/lib/video-compositor'
 import { CLIP_CATEGORIES, CLIP_MAX_SECONDS, type ClipCategory } from '@/lib/clips/types'
 
 interface Channel { id: string; name: string; slug: string }
-interface Station { id: string; name: string }
+interface Station { id: string; name: string; icon?: string | null }
 
 interface UploadStudioProps {
   channels: Channel[]
+  communityChannels?: Channel[]
+  stations?: Station[]
   preselectedStation?: Station | null
   isCreator?: boolean
 }
+
+type Destination = { kind: 'general' | 'channel' | 'station'; id: string | null }
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`
@@ -56,9 +60,13 @@ function probeDuration(file: File): Promise<number | null> {
   })
 }
 
-export default function UploadStudio({ channels }: UploadStudioProps) {
+export default function UploadStudio({ channels, communityChannels = [], stations = [], preselectedStation }: UploadStudioProps) {
   const router = useRouter()
   const uploadStore = useUploadStore()
+
+  const [destination, setDestination] = useState<Destination>(
+    preselectedStation ? { kind: 'station', id: preselectedStation.id } : { kind: 'general', id: null }
+  )
 
   const [files, setFiles] = useState<File[]>([])
   const [step, setStep] = useState<'select' | 'meta' | 'uploading' | 'done'>('select')
@@ -214,10 +222,10 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
       await uploadStore.startUpload(queue[i], {
         title: i === 0 ? title.trim() : `${title.trim()} (${i + 1})`,
         description: description.trim() || undefined,
-        channelId: channels[0]?.id || null,
+        channelId: destination.kind === 'channel' ? destination.id : null,
         visibility,
         pricingModel: 'free', postType: 'general', tags: null,
-        stationId: null,
+        stationId: destination.kind === 'station' ? destination.id : null,
         // persist edit settings with the edited clip so nothing is ever lost,
         // even when edits are already baked into the uploaded file
         clipStart: isEditedClip && !editsBaked ? output?.clipStart ?? null : null,
@@ -436,6 +444,54 @@ export default function UploadStudio({ channels }: UploadStudioProps) {
               )}
             </div>
           )}
+
+          {/* ── Post to: destination selector ── */}
+          <div className="space-y-1.5">
+            <label htmlFor="post-destination" className="text-xs font-medium text-zinc-400">Post to</label>
+            <div className="relative">
+              <select
+                id="post-destination"
+                value={destination.kind === 'general' ? 'general' : `${destination.kind}:${destination.id}`}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === 'general') {
+                    setDestination({ kind: 'general', id: null })
+                  } else {
+                    const [kind, id] = v.split(':')
+                    setDestination({ kind: kind as 'channel' | 'station', id })
+                  }
+                }}
+                className="w-full appearance-none bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 pr-10 text-sm text-white focus:outline-none focus:border-primary/50"
+              >
+                <option value="general">My profile (general)</option>
+                {channels.length > 0 && (
+                  <optgroup label="My channels">
+                    {channels.map(c => (
+                      <option key={c.id} value={`channel:${c.id}`}>{c.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {communityChannels.length > 0 && (
+                  <optgroup label="Community channels">
+                    {communityChannels.map(c => (
+                      <option key={c.id} value={`channel:${c.id}`}>{c.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {stations.length > 0 && (
+                  <optgroup label="Stations">
+                    {stations.map(s => (
+                      <option key={s.id} value={`station:${s.id}`}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            </div>
+            <p className="text-[11px] text-zinc-600">
+              Stations are public category feeds anyone can post to. Community channels accept posts from all creators.
+            </p>
+          </div>
 
           {/* Title + Visibility + Publish row */}
           <div className="flex items-center gap-3">
