@@ -108,6 +108,7 @@ function SampleVideoCard({ video, isTouch }: { video: SampleVideo; isTouch: bool
         onTouchMove={isTouch ? handleTouchMove : undefined}
         onTouchEnd={isTouch ? handleTouchEnd : undefined}
       >
+        <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${video.thumbnailUrl})` }} />
         <Image
           src={video.thumbnailUrl}
           alt={video.title}
@@ -188,6 +189,7 @@ function RealVideoCard({ video, isTouch }: { video: Video; isTouch: boolean }) {
         onTouchMove={isTouch ? handleTouchMove : undefined}
         onTouchEnd={isTouch ? handleTouchEnd : undefined}
       >
+        <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${thumbnail})` }} />
         <Image
           src={thumbnail}
           alt={video.title}

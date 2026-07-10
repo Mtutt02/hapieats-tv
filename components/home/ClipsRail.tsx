@@ -61,6 +61,7 @@ export default function ClipsRail({ feed = 'trending', skip = 0, title = 'Trendi
             href={`/clips/${clip.id}`}
             className="group relative flex-shrink-0 w-32 sm:w-40 aspect-[9/16] rounded-xl overflow-hidden bg-black snap-start"
           >
+            <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${clipThumbnail(clip.mux_playback_id)})` }} />
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={clipThumbnail(clip.mux_playback_id)}

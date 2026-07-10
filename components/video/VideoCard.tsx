@@ -95,6 +95,8 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
           {...mouseHandlers}
           {...touchHandlers}
         >
+          {/* Blurred fill behind non-16:9 frames — YouTube-style, no crop */}
+          <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${thumbnail})` }} />
           <Image
             src={thumbnail}
             alt={video.title}
@@ -164,6 +166,8 @@ export default function VideoCard({ video, compact = false }: VideoCardProps) {
         {...mouseHandlers}
         {...touchHandlers}
       >
+        {/* Blurred fill behind non-16:9 frames — YouTube-style, no crop */}
+        <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${thumbnail})` }} />
         {/* Static thumbnail — fades out when video loads, zooms on hover */}
         <Image
           src={thumbnail}

@@ -29,13 +29,16 @@ export default function ClipsGrid({ clips }: ClipsGridProps) {
           className="group relative aspect-[9/16] overflow-hidden rounded-xl border bg-black"
         >
           {clip.mux_playback_id ? (
-            <Image
-              src={clipThumbnail(clip.mux_playback_id)}
-              alt={clip.title ?? 'Clip'}
-              fill
-              sizes="(max-width: 640px) 50vw, 33vw"
-              className="object-contain transition-transform duration-200 group-hover:scale-105"
-            />
+            <>
+              <div aria-hidden className="absolute inset-0 scale-125 bg-cover bg-center opacity-60 blur-lg" style={{ backgroundImage: `url(${clipThumbnail(clip.mux_playback_id)})` }} />
+              <Image
+                src={clipThumbnail(clip.mux_playback_id)}
+                alt={clip.title ?? 'Clip'}
+                fill
+                sizes="(max-width: 640px) 50vw, 33vw"
+                className="object-contain transition-transform duration-200 group-hover:scale-105"
+              />
+            </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center bg-muted">
               <Play className="h-8 w-8 text-muted-foreground" />
