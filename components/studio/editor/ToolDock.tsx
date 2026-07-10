@@ -308,15 +308,34 @@ function AudioTab() {
   const addToTimeline = useAddClipToTimeline()
   const { addAsset } = useEditor()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [tracks, setTracks] = useState<Array<{ name: string; url: string }>>([])
+  const [tracks, setTracks] = useState<Array<{ id: string; name: string; genre: string }>>([])
+  const [addingTrack, setAddingTrack] = useState<string | null>(null)
   const [rec, setRec] = useState<'idle' | 'recording' | 'stopped'>('idle')
   const recorderRef = useRef<{ stop: () => Promise<Blob | null> } | null>(null)
 
   useEffect(() => {
-    import('@/components/studio/audio-utils').then(m => {
-      setTracks((m.BUILTIN_TRACKS as Array<{ name: string; url: string }>) || [])
+    // Synthesized in-app music library — no external CDN dependency
+    import('@/components/editor/music-data').then(m => {
+      setTracks(m.MUSIC_LIBRARY.map(t => ({ id: t.id, name: t.name, genre: t.genre })))
     }).catch(() => {})
   }, [])
+
+  /** Generate a builtin track's audio and import it like an uploaded file (persists in the project). */
+  const addBuiltinTrack = async (trackId: string) => {
+    setAddingTrack(trackId)
+    try {
+      const m = await import('@/components/editor/music-data')
+      const full = m.MUSIC_LIBRARY.find(t => t.id === trackId)
+      if (!full) return
+      const blobUrl = m.generateTrackAudio(full)
+      const blob = await fetch(blobUrl).then(r => r.blob())
+      URL.revokeObjectURL(blobUrl)
+      const file = new File([blob], `${full.name}.wav`, { type: blob.type || 'audio/wav' })
+      await importAudio(file)
+    } catch { /* generation failed */ } finally {
+      setAddingTrack(null)
+    }
+  }
 
   const importAudio = async (fileOrUrl: File | { name: string; url: string }) => {
     let asset: MediaAsset
@@ -377,11 +396,12 @@ function AudioTab() {
         {tracks.length === 0 ? (
           <p className="text-[11px] text-zinc-600">Built-in tracks unavailable.</p>
         ) : (
-          <div className="space-y-1">
+          <div className="max-h-56 space-y-1 overflow-y-auto pr-0.5">
             {tracks.map(t => (
-              <button key={t.name} onClick={() => importAudio(t)} className="flex w-full items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 text-left hover:border-emerald-500/50">
-                <Music className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+              <button key={t.id} onClick={() => addBuiltinTrack(t.id)} disabled={addingTrack !== null} className="flex w-full items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 text-left hover:border-emerald-500/50 disabled:opacity-60">
+                {addingTrack === t.id ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-400" /> : <Music className="h-3.5 w-3.5 shrink-0 text-violet-400" />}
                 <span className="flex-1 truncate text-[11px] text-zinc-200">{t.name}</span>
+                <span className="text-[9px] text-zinc-600">{t.genre}</span>
                 <Plus className="h-3.5 w-3.5 text-zinc-500" />
               </button>
             ))}

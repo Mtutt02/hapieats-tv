@@ -174,10 +174,12 @@ export async function composeFinalVideo(
   // Source 3: Music track (if selected — generated via Web Audio API)
   if (output.musicTrack) {
     try {
-      const { generateTrackAudio } = await import('@/components/editor/music-data')
-      const musicUrl = generateTrackAudio(
-        { id: output.musicTrack, name: '', genre: '', duration: '' },
-      )
+      const { generateTrackAudio, MUSIC_LIBRARY } = await import('@/components/editor/music-data')
+      // Look up the FULL track (with its composition config) — passing a bare
+      // id object would silently fall back to a placeholder tone.
+      const fullTrack = MUSIC_LIBRARY.find(t => t.id === output.musicTrack)
+        ?? { id: output.musicTrack, name: '', genre: '', duration: '' }
+      const musicUrl = generateTrackAudio(fullTrack)
       const musicRes = await fetch(musicUrl)
       const musicBuf = await musicRes.arrayBuffer()
       const musicAudio = await audioCtx.decodeAudioData(musicBuf)

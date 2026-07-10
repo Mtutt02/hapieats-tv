@@ -3,7 +3,8 @@
 import { useState, useRef } from 'react'
 import { X, Download, UploadCloud, Loader2, CheckCircle2, Crown, Clapperboard } from 'lucide-react'
 import { useEditor } from '@/lib/editor/store'
-import { exportProject, publishToPlatform, downloadResult, ExportResult } from '@/lib/editor/export'
+import { exportProject, downloadResult, ExportResult } from '@/lib/editor/export'
+import { useUploadStore } from '@/lib/upload-store'
 import { engineRef } from './PreviewPanel'
 import { usePremium } from './usePremium'
 
@@ -56,17 +57,30 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const doPublish = async () => {
     const result = resultRef.current || await render()
     if (!result) return
-    setPhase('uploading')
-    setLabel('Uploading to HapiEats TV…')
-    setPct(0)
     try {
-      const { videoId } = await publishToPlatform(
-        result,
-        { title },
-        p => setPct(p),
-        { isClip: isVertical && publishAsClip, clipCategory: isVertical && publishAsClip ? 'food' : null },
-      )
-      setVideoId(videoId)
+      // Hand off to the app-wide background uploader (floating toast) so the
+      // user can keep browsing while the render uploads.
+      const ext = result.mimeType.includes('mp4') ? 'mp4' : 'webm'
+      const file = new File([result.blob], `${title || 'studio-export'}.${ext}`, { type: result.mimeType })
+      await useUploadStore.getState().startUpload(file, {
+        title: title || 'Studio export',
+        description: 'Created with HapiEats TV Studio',
+        channelId: null,
+        visibility: 'public',
+        pricingModel: 'free',
+        postType: 'general',
+        tags: null,
+        stationId: null,
+        isClip: isVertical && publishAsClip,
+        clipCategory: isVertical && publishAsClip ? 'food' : null,
+      })
+      const state = useUploadStore.getState()
+      if (state.status === 'error') {
+        setError(state.error || 'Publish failed')
+        setPhase('error')
+        return
+      }
+      setVideoId(state.videoId)
       setPhase('done')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Publish failed')
@@ -115,11 +129,21 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
         ) : phase === 'done' ? (
           <div className="mt-6 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
-            <p className="mt-2 text-sm font-semibold text-white">{videoId ? 'Published to HapiEats TV!' : 'Export complete'}</p>
+            <p className="mt-2 text-sm font-semibold text-white">{videoId ? 'Uploading in the background!' : 'Export complete'}</p>
             {videoId ? (
-              <a href="/studio/videos" className="mt-4 inline-block rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-black hover:bg-emerald-400">
-                View in your videos
-              </a>
+              <>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Your video is uploading — watch the progress toast and keep browsing the app while it finishes.
+                </p>
+                <div className="mt-4 flex justify-center gap-2">
+                  <a href="/" className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-black hover:bg-emerald-400">
+                    Browse while it uploads
+                  </a>
+                  <a href="/studio/videos" className="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-800">
+                    My videos
+                  </a>
+                </div>
+              </>
             ) : (
               <p className="mt-1 text-xs text-zinc-500">Saved to your downloads.</p>
             )}

@@ -11,7 +11,10 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Play, Pause, Check, X, Wand2, Music, Type as TypeIcon, Loader2, ArrowUpRight } from 'lucide-react'
 import type { EditorOutput, Overlay } from '@/components/editor/types'
 import { DEFAULT_FILTERS } from '@/components/editor/types'
-import { MUSIC_LIBRARY } from '@/components/editor/music-data'
+import { MUSIC_LIBRARY, generateTrackAudio } from '@/components/editor/music-data'
+import { newProject, defaultClip, uid as newId, DEFAULT_TEXT_STYLE } from '@/lib/editor/types'
+import { saveAssetBlob, saveProjectLocal } from '@/lib/editor/persist'
+import { probeMediaFile } from '@/lib/editor/import'
 
 interface Props {
   files: File[]
@@ -56,8 +59,46 @@ export default function QuickEdit({ files, onComplete, onCancel }: Props) {
   const [textColor, setTextColor] = useState('#ffffff')
   const [musicId, setMusicId] = useState<string | null>(null)
   const [handoff, setHandoff] = useState(false)
+  const musicRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
+
+  // Live music preview — generate the selected track and keep it in sync
+  // with video playback (loops under the video at reduced volume).
+  useEffect(() => {
+    // tear down previous track
+    if (musicRef.current) {
+      musicRef.current.pause()
+      URL.revokeObjectURL(musicRef.current.src)
+      musicRef.current = null
+    }
+    if (!musicId) return
+    const track = MUSIC_LIBRARY.find(t => t.id === musicId)
+    if (!track) return
+    try {
+      const audio = new Audio(generateTrackAudio(track))
+      audio.loop = true
+      audio.volume = 0.35
+      musicRef.current = audio
+      if (playing) audio.play().catch(() => {})
+    } catch { /* audio generation unavailable */ }
+    return () => {
+      if (musicRef.current) {
+        musicRef.current.pause()
+        URL.revokeObjectURL(musicRef.current.src)
+        musicRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [musicId])
+
+  // follow play/pause state
+  useEffect(() => {
+    const m = musicRef.current
+    if (!m) return
+    if (playing) m.play().catch(() => {})
+    else m.pause()
+  }, [playing])
 
   const onMeta = () => {
     const d = videoRef.current?.duration || 0
@@ -132,14 +173,9 @@ export default function QuickEdit({ files, onComplete, onCancel }: Props) {
     if (!file) return
     setHandoff(true)
     try {
-      const [{ newProject, defaultClip, uid, DEFAULT_TEXT_STYLE }, { saveAssetBlob, saveProjectLocal }, { probeMediaFile }] = await Promise.all([
-        import('@/lib/editor/types'),
-        import('@/lib/editor/persist'),
-        import('@/lib/editor/import'),
-      ])
       const meta = await probeMediaFile(file)
       const project = newProject(file.name.replace(/\.[^.]+$/, ''))
-      const asset = { id: uid(), kind: 'video' as const, name: file.name, url: '', duration: meta.duration, width: meta.width, height: meta.height }
+      const asset = { id: newId(), kind: 'video' as const, name: file.name, url: '', duration: meta.duration, width: meta.width, height: meta.height }
       await saveAssetBlob(asset.id, file)
       project.assets.push(asset)
       const videoTrack = project.tracks.find(t => t.kind === 'video')!
@@ -165,8 +201,10 @@ export default function QuickEdit({ files, onComplete, onCancel }: Props) {
         textTrack.clips.push(t)
       }
       await saveProjectLocal(project)
-      window.location.href = `/studio/editor?project=${project.id}`
-    } catch {
+      window.location.assign(`/studio/editor?project=${project.id}`)
+    } catch (err) {
+      console.error('Studio handoff failed:', err)
+      window.alert('Could not open the Studio Editor with this file — please try again.')
       setHandoff(false)
     }
   }
