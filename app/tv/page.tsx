@@ -22,6 +22,10 @@ const STATION_DIAL: string[] = [
   'italian',          // 6 — Family Table
   'japanese-kitchen', // 7 — Wander and Taste
   'plant-based',      // 8 — Fresh and Fit
+  'travel',           // 9 — Wanderlust
+  'lifestyle',        // 10 — The Good Life
+  'mukbang',          // 11 — Feast Mode
+  'food-reviews',     // 12 — Taste Test
 ]
 
 interface StationRow {
