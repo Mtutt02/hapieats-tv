@@ -2,17 +2,17 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Clapperboard, Radio, Tv, UserCircle } from 'lucide-react'
+import { Home, Clapperboard, Radio, Tv, UploadCloud } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
-  { href: '/',         label: 'Home',    Icon: Home,         exact: true  },
-  { href: '/clips',    label: 'Clips',   Icon: Clapperboard, exact: false },
-  { href: '/live',     label: 'Live',    Icon: Radio,        exact: false },
-  { href: '/tv',       label: 'Shows',   Icon: Tv,           exact: false },
-  { href: '/settings', label: 'Profile', Icon: UserCircle,   exact: false },
+  { href: '/',              label: 'Home',   Icon: Home,         exact: true  },
+  { href: '/clips',         label: 'Clips',  Icon: Clapperboard, exact: false },
+  { href: '/studio/upload', label: 'Upload', Icon: UploadCloud,  exact: false },
+  { href: '/tv',            label: 'Shows',  Icon: Tv,           exact: false },
+  { href: '/live',          label: 'Live',   Icon: Radio,        exact: false },
 ]
 
 // Immersive routes where the bar must not render:
