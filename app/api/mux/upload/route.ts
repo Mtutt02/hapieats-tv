@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl, isClip, clipCategory, coverDataUrl } = body
+    const { title, description, channelId, visibility, pricingModel, price, postType, tags, stationId, clipStart, clipEnd, overlays, musicTrack, filters, voiceoverUrl, isClip, clipCategory, coverDataUrl, seriesId, newSeriesTitle } = body
 
     // Clips — validate the category against the shared allowed list
     const wantsClip = isClip === true
@@ -144,6 +144,41 @@ export async function POST(req: NextRequest) {
 
     if ('error' in result) {
       return NextResponse.json({ error: 'Failed to create video record' }, { status: 500 })
+    }
+
+    // Add to a series (playlist) if requested — an existing one, or a brand
+    // new series created under this channel on the fly.
+    try {
+      let targetSeriesId: string | null = seriesId ?? null
+      if (!targetSeriesId && newSeriesTitle && channelId) {
+        const { data: created } = await serviceClient
+          .from('series')
+          .insert({
+            channel_id: channelId,
+            creator_id: user.id,
+            title: String(newSeriesTitle).trim().slice(0, 120),
+            slug: String(newSeriesTitle).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60),
+          })
+          .select('id')
+          .single()
+        targetSeriesId = created?.id ?? null
+      }
+      if (targetSeriesId) {
+        // verify the series belongs to the caller, then append
+        const { data: ok } = await serviceClient
+          .from('series').select('id').eq('id', targetSeriesId).eq('creator_id', user.id).single()
+        if (ok) {
+          const { data: last } = await serviceClient
+            .from('series_videos').select('position').eq('series_id', targetSeriesId)
+            .order('position', { ascending: false }).limit(1).maybeSingle()
+          await serviceClient.from('series_videos').upsert(
+            { series_id: targetSeriesId, video_id: result.id, position: (last?.position ?? -1) + 1 },
+            { onConflict: 'series_id,video_id' },
+          )
+        }
+      }
+    } catch (e) {
+      console.warn('[mux/upload] series attach failed (non-fatal):', e)
     }
 
     return NextResponse.json({

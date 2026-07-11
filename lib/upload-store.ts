@@ -24,6 +24,8 @@ export interface UploadMeta {
   isClip?: boolean
   clipCategory?: string | null
   coverDataUrl?: string | null // composed 16:9 cover (data URL)
+  seriesId?: string | null       // add the upload to an existing series
+  newSeriesTitle?: string | null // or create a new series under the channel
 }
 
 interface UploadStore {

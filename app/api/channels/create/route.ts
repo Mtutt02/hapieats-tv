@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { channelLimit } from '@/lib/limits'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$|^[a-z0-9]{3}$/
 
@@ -10,6 +11,27 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Enforce per-plan channel cap. Free accounts are limited; Pro members get more.
+    const service = createServiceClient()
+    const [{ count: channelCount }, { data: isProData }] = await Promise.all([
+      service.from('channels').select('id', { count: 'exact', head: true }).eq('creator_id', user.id),
+      service.rpc('is_pro_member', { p_user_id: user.id }),
+    ])
+    const isPro = isProData === true
+    const limit = channelLimit(isPro)
+    if ((channelCount ?? 0) >= limit) {
+      return NextResponse.json(
+        {
+          error: isPro
+            ? `You've reached the maximum of ${limit} channels.`
+            : `Free accounts can create up to ${limit} channels. Upgrade to HapiEats Pro for more.`,
+          limitReached: true,
+          isPro,
+        },
+        { status: 403 }
+      )
     }
 
     const body = await request.json()

@@ -92,6 +92,21 @@ export default function UploadStudio({ channels, communityChannels = [], station
   const [coverDataUrl, setCoverDataUrl] = useState<string | null>(null)
   const probedFileRef = useRef<File | null>(null)
 
+  // Series (playlist) selection — only when posting to a channel
+  const [seriesList, setSeriesList] = useState<Array<{ id: string; title: string; video_count: number }>>([])
+  const [seriesSel, setSeriesSel] = useState<string>('none') // 'none' | 'new' | <seriesId>
+  const [newSeriesTitle, setNewSeriesTitle] = useState('')
+
+  useEffect(() => {
+    if (destination.kind !== 'channel' || !destination.id) { setSeriesList([]); setSeriesSel('none'); return }
+    let alive = true
+    fetch(`/api/series?channelId=${destination.id}`)
+      .then(r => (r.ok ? r.json() : { series: [] }))
+      .then(d => { if (alive) setSeriesList(d.series || []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [destination])
+
   // Auto-enable "Post as Clip" when the first selected file is portrait and short.
   // Only ever turns the toggle ON — the user stays free to toggle it off.
   useEffect(() => {
@@ -240,6 +255,9 @@ export default function UploadStudio({ channels, communityChannels = [], station
         clipCategory: isClip ? clipCategory : null,
         // custom cover only applies to the first (primary) file
         coverDataUrl: i === 0 ? coverDataUrl : null,
+        // series: existing series id, or create a new one from the typed title
+        seriesId: destination.kind === 'channel' && seriesSel !== 'none' && seriesSel !== 'new' ? seriesSel : null,
+        newSeriesTitle: destination.kind === 'channel' && seriesSel === 'new' && newSeriesTitle.trim() ? newSeriesTitle.trim() : null,
       })
       if (useUploadStore.getState().status === 'error') break
       if (i === 0) setUploadedVideoId(useUploadStore.getState().videoId)
@@ -495,6 +513,42 @@ export default function UploadStudio({ channels, communityChannels = [], station
             <p className="text-[11px] text-zinc-600">
               Stations are public category feeds anyone can post to. Community channels accept posts from all creators.
             </p>
+
+            {/* Series (playlist) — only for channel destinations */}
+            {destination.kind === 'channel' && destination.id && (
+              <div className="mt-2 space-y-1.5">
+                <label className="text-xs font-medium text-zinc-400">Add to a series (optional)</label>
+                <div className="relative">
+                  <select
+                    value={seriesSel}
+                    onChange={e => setSeriesSel(e.target.value)}
+                    className="w-full appearance-none bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 pr-10 text-sm text-white focus:outline-none focus:border-primary/50"
+                  >
+                    <option value="none">No series</option>
+                    {seriesList.length > 0 && (
+                      <optgroup label="Existing series">
+                        {seriesList.map(s => (
+                          <option key={s.id} value={s.id}>{s.title} ({s.video_count})</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="new">+ New series…</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                </div>
+                {seriesSel === 'new' && (
+                  <input
+                    value={newSeriesTitle}
+                    onChange={e => setNewSeriesTitle(e.target.value)}
+                    placeholder="New series name (e.g. “30-Minute Dinners”)"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-primary/50"
+                  />
+                )}
+                <p className="text-[11px] text-zinc-600">
+                  A series is a playlist under your channel — add more videos to it anytime.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Title + Visibility + Publish row */}
