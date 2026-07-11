@@ -4,6 +4,7 @@ import { stripe } from '@/lib/stripe'
 import { createServiceClient } from '@/lib/supabase/server'
 import Stripe from 'stripe'
 import { getCreditBalance } from '@/lib/credits'
+import { handleProCheckoutCompleted, handleProSubscriptionEvent } from '@/lib/academy/pro'
 
 export const runtime = 'nodejs'
 
@@ -56,6 +57,11 @@ export async function POST(req: NextRequest) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session
       const { userId, checkoutMode, videoId, channelId } = session.metadata ?? {}
+
+      // HapiEats Pro all-access subscription
+      if (session.metadata?.kind === 'pro_subscription') {
+        await handleProCheckoutCompleted(supabase, session)
+      }
 
       if (checkoutMode === 'pay_per_view' && videoId && userId) {
         await supabase.from('purchases').upsert({
@@ -307,6 +313,11 @@ export async function POST(req: NextRequest) {
       const sub = event.data.object as Stripe.Subscription
       const { userId, channelId } = sub.metadata
 
+      // HapiEats Pro all-access subscription state changes
+      if (sub.metadata?.kind === 'pro_subscription') {
+        await handleProSubscriptionEvent(supabase, sub)
+      }
+
       if (userId && channelId) {
         await supabase.from('subscriptions').upsert({
           subscriber_id: userId,
@@ -332,6 +343,10 @@ export async function POST(req: NextRequest) {
     case 'customer.subscription.deleted': {
       const sub = event.data.object as Stripe.Subscription
       const { userId, channelId } = sub.metadata
+
+      if (sub.metadata?.kind === 'pro_subscription') {
+        await handleProSubscriptionEvent(supabase, sub)
+      }
 
       if (userId && channelId) {
         await supabase.from('subscriptions')

@@ -42,11 +42,11 @@ const LEARN_ITEMS: NavItem[] = [
 ]
 
 const CREATE_ITEMS: NavItem[] = [
-  { href: '/studio/upload',   icon: UploadCloud,     label: 'Upload'      },
-  { href: '/studio/go-live',  icon: Zap,             label: 'Go Live'     },
-  { href: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard'   },
-  { href: '/studio',          icon: Clapperboard,    label: 'Studio'      },
-  { href: '/creator/courses', icon: BookOpen,        label: 'My Courses'  },
+  { href: '/studio/upload',   icon: UploadCloud,     label: 'Upload'          },
+  { href: '/studio/go-live',  icon: Zap,             label: 'Go Live'         },
+  { href: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard'       },
+  { href: '/studio',          icon: Clapperboard,    label: 'Studio'          },
+  { href: '/academy',         icon: GraduationCap,   label: 'Academy Studio'  },
 ]
 
 const EARN_ITEMS: NavItem[] = [
