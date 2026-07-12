@@ -14,7 +14,12 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createClient()
-  const trimmed = q.trim()
+  // Strip PostgREST filter metacharacters so the term can't inject extra
+  // filters into the .or() string. Keeps letters, numbers, spaces, basic punctuation.
+  const trimmed = q.trim().replace(/[,().*:%\\]/g, ' ').slice(0, 80)
+  if (trimmed.length < 2) {
+    return NextResponse.json({ videos: [], channels: [], query: trimmed })
+  }
 
   let videos: unknown[] = []
   let channels: unknown[] = []

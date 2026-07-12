@@ -91,8 +91,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
   if (q.length >= 2) {
     const supabase = createClient()
-    // Sanitize: escape SQL LIKE wildcards, strip chars that break PostgREST .or() filter syntax
-    const safeQ = q.replace(/[%_]/g, '\\$&').replace(/[(),]/g, '')
+    // Sanitize: strip every PostgREST filter metacharacter so the term can't
+    // inject extra filters into the .or() string.
+    const safeQ = q.replace(/[,().*:%\\_]/g, ' ').slice(0, 80)
 
     if (type === 'videos' || type === 'all') {
       const { data } = await supabase
