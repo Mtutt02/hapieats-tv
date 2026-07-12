@@ -8,7 +8,7 @@ import {
   Home, Radio, Rss, TrendingUp, Tv, BookOpen, GraduationCap,
   UploadCloud, Clapperboard, LayoutDashboard, DollarSign,
   Wallet, Target, Coins, Trophy, Settings, HelpCircle,
-  BadgeDollarSign, X, ChevronDown, Zap, ShieldCheck,
+  BadgeDollarSign, X, ChevronDown, Zap, ShieldCheck, MessageCircleQuestion,
 } from 'lucide-react'
 import Logo from './Logo'
 import { cn } from '@/lib/utils'
@@ -235,6 +235,14 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
             <NavSection label="My Economy" icon={Coins} items={ACCOUNT_ITEMS} onClose={onClose} />
             <NavLink item={{ href: '/settings', icon: Settings, label: 'Settings' }} onClose={onClose} />
             <NavLink item={{ href: '/faq',      icon: HelpCircle, label: 'Help & FAQ' }} onClose={onClose} />
+            <button
+              type="button"
+              onClick={() => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('open-hapi-helper')); onClose?.() }}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-accent/70 hover:text-foreground transition-all touch-manipulation w-full text-left"
+            >
+              <MessageCircleQuestion className="h-4 w-4 flex-shrink-0" />
+              <span className="truncate">Ask Hapi Helper</span>
+            </button>
           </nav>
         </>
       )}

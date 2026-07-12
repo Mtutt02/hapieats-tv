@@ -571,6 +571,20 @@ export default function FAQPage() {
           </div>
         </div>
 
+        {/* Ask Hapi Helper — opens the AI assistant */}
+        <button
+          type="button"
+          onClick={() => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('open-hapi-helper')) }}
+          className="mb-10 flex w-full items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-left transition-colors hover:bg-primary/10"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-lg">🍽️</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-foreground">Ask Hapi Helper</span>
+            <span className="block text-xs text-muted-foreground">Chat with our AI assistant for instant answers about how anything works.</span>
+          </span>
+          <span className="ml-auto text-xs font-semibold text-primary">Open chat →</span>
+        </button>
+
         {/* Sections */}
         <div className="space-y-8">
           {FAQ_SECTIONS.map((section) => (

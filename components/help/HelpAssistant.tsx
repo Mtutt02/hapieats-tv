@@ -32,6 +32,13 @@ export default function HelpAssistant() {
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, open])
 
+  // Let any button anywhere open the assistant via window.dispatchEvent(new Event('open-hapi-helper'))
+  useEffect(() => {
+    const openit = () => setOpen(true)
+    window.addEventListener('open-hapi-helper', openit)
+    return () => window.removeEventListener('open-hapi-helper', openit)
+  }, [])
+
   if (HIDDEN.some(re => re.test(pathname))) return null
 
   const send = async (text: string) => {
