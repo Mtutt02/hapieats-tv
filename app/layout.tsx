@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toaster'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import GlobalUploadToast from '@/components/upload/GlobalUploadToast'
+import HelpAssistant from '@/components/help/HelpAssistant'
 import CookieConsent from '@/components/CookieConsent'
 import ConsentGate from '@/components/ConsentGate'
 
@@ -75,6 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className}>
         {children}
         <GlobalUploadToast />
+        <HelpAssistant />
         <Toaster />
         <ConsentGate>
           <Analytics />

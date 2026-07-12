@@ -10,7 +10,7 @@ export default function CreatorAgreementPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">Creator Monetization Agreement</h1>
-        <p className="text-muted-foreground mb-10">Effective date: June 2026</p>
+        <p className="text-muted-foreground mb-10">Effective date: July 12, 2026</p>
 
         <div className="space-y-8 text-muted-foreground leading-relaxed">
 
@@ -58,6 +58,21 @@ export default function CreatorAgreementPage() {
             <p className="mt-2">A <strong className="text-foreground">platform cashout fee of 5%</strong> applies to all cashouts. This fee covers payment processing costs. After the 5% fee, funds are transferred to your connected Stripe account, typically within 2–7 business days, depending on your bank.</p>
             <p className="mt-2">Example: $100 creator earnings → $5.00 cashout fee → $95.00 transferred to you.</p>
             <p className="mt-2">HapiEats TV will issue required tax forms (1099-K or equivalent) where required by law. You are responsible for reporting and paying taxes on all income earned through the platform.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">3a. Hapi Token Gifts &amp; HapiEats Pro Pool</h2>
+            <p>In addition to Flavor Points, viewers may send <strong className="text-foreground">Hapi Token</strong> gifts. For token gifts, you receive <strong className="text-foreground">70%</strong> of the gift's server-recorded value and HapiEats TV retains 30%. If you list classes in <strong className="text-foreground">HapiEats Pro</strong> (all-access membership), you also earn from a monthly creator pool distributed in proportion to how much your Pro-included content is actually watched and completed. Pool amounts vary month to month, are not guaranteed, and are calculated by our systems, whose records are authoritative.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">3b. Recoupment, Chargebacks, Advances &amp; Loans</h2>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li><strong className="text-foreground">Chargebacks &amp; refunds.</strong> If a payment that generated your earnings is later refunded, reversed, or charged back, the corresponding creator share is reversed. You are liable for the reversed amount, and we may deduct it from your balance or future earnings.</li>
+              <li><strong className="text-foreground">Offset against earnings.</strong> You authorize HapiEats TV to offset and recover any negative balance, overpayment, reversed transaction, chargeback, promotional credit, token advance, or loan we have extended to you against your current and future earnings, wallet balances, and any amounts we owe you, before any cashout. Where earnings are insufficient, the balance remains due.</li>
+              <li><strong className="text-foreground">Advances &amp; loans are discretionary.</strong> Any advance against expected earnings, or any loan or credit line we choose to extend, is offered at our sole discretion, is a repayment obligation on the terms disclosed when offered, and may be recalled and become immediately due upon fraud, abuse, a chargeback, account closure, or breach of this Agreement or the <a href="/terms" className="text-primary hover:underline">Terms</a> (see Terms §6a).</li>
+              <li><strong className="text-foreground">Holds &amp; investigations.</strong> We may place holds on earnings or cashouts, and suspend monetization, while we investigate suspected fraud, self-gifting, collusive gifting, chargeback abuse, or policy violations.</li>
+            </ul>
           </section>
 
           <section>

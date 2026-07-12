@@ -3,7 +3,7 @@ import AppShell from '@/components/layout/AppShell'
 
 export const metadata: Metadata = {
   title: 'Terms & Conditions',
-  description: 'HapiEats TV Terms & Conditions — the rules governing accounts, content, Hapi Tokens, subscriptions, creator payouts, and use of our platform.',
+  description: 'HapiEats TV Terms & Conditions — accounts, content, Hapi Tokens, credits and loans, subscriptions, creator payouts, and use of our platform.',
 }
 
 export default function TermsPage() {
@@ -11,7 +11,7 @@ export default function TermsPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">Terms &amp; Conditions</h1>
-        <p className="text-muted-foreground mb-10">Last updated: July 8, 2026</p>
+        <p className="text-muted-foreground mb-10">Last updated: July 12, 2026</p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-muted-foreground leading-relaxed">
 
@@ -67,6 +67,20 @@ export default function TermsPage() {
               <li>Sent gifts are final once delivered; the corresponding token debit will not be reversed except in cases of verified technical failure or fraud, at our discretion.</li>
               <li>We may change token pricing, gift catalog contents, and gift values at any time; changes do not apply retroactively to completed transactions.</li>
               <li>Unused tokens may be forfeited without compensation if your account is terminated for violating these Terms, or upon lawful discontinuation of the token program with reasonable advance notice where required by law.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-foreground mb-2">6a. Platform Credits, Token Advances, and Loans</h2>
+            <p>From time to time HapiEats TV may, in its <strong className="text-foreground">sole and absolute discretion</strong>, offer eligible users or creators "Credits", token advances, or short-term loans (collectively, "Credit") — for example, promotional token credits, advances against expected creator earnings, or a balance that lets you use certain features before paying. Credit is a privilege, not a right, and the following terms apply:</p>
+            <ul className="list-disc pl-6 mt-2 space-y-1">
+              <li><strong className="text-foreground">No obligation to extend.</strong> We are never obligated to offer, approve, renew, or increase any Credit, and we may decline, reduce, suspend, or revoke Credit at any time, for any reason, with or without notice, subject to applicable law.</li>
+              <li><strong className="text-foreground">Repayment obligation.</strong> Credit that is advanced or loaned to you (as opposed to a free promotional grant we expressly designate as non-repayable) is a binding obligation that you must repay in full according to the repayment terms shown at the time it is extended. Promotional Credits carry no cash value and may expire.</li>
+              <li><strong className="text-foreground">Offset against earnings and balances.</strong> You authorize HapiEats TV to recover any outstanding Credit, advance, loan, negative balance, overpayment, reversed transaction, or chargeback by <strong className="text-foreground">deducting or offsetting it against your current or future creator earnings, wallet balances, token balances, and any amounts we owe you</strong>, before making any payout. Where earnings are insufficient, the remaining balance remains due and payable.</li>
+              <li><strong className="text-foreground">Recall and acceleration.</strong> We may declare all outstanding Credit immediately due and payable if you violate these Terms, engage in fraud or abuse, initiate a chargeback, close your account, or become the subject of insolvency proceedings.</li>
+              <li><strong className="text-foreground">Fees and interest.</strong> Unless a specific Credit offer states otherwise, advances and promotional Credits carry no interest. Any interest, fees, or charges that do apply to a particular loan or advance will be disclosed to you at the time you accept it, and you agree to them by accepting the Credit.</li>
+              <li><strong className="text-foreground">Not a banking, deposit, or investment product.</strong> Credits, tokens, and wallet balances are not bank deposits, securities, e-money, or investments, are not insured, earn no interest to you, and confer no ownership or equity interest in HapiEats TV. Balances reflect a limited license to use Platform features, not a monetary claim except for legitimately accrued, payable creator earnings.</li>
+              <li><strong className="text-foreground">Anti-abuse.</strong> Credit, tokens, and advances may not be used to launder value, cash out through self-gifting or collusive gifting, or convert promotional grants into cash. We may reverse any transaction and revoke any balance obtained through such abuse.</li>
             </ul>
           </section>
 
