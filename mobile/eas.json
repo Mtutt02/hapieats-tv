@@ -1,0 +1,32 @@
+{
+  "cli": { "version": ">= 13.0.0", "appVersionSource": "remote" },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://YOUR-PROJECT.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "YOUR-ANON-KEY",
+        "EXPO_PUBLIC_API_URL": "https://hapieatstv.com",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_XXXX",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_KEY": "goog_XXXX"
+      }
+    },
+    "preview": {
+      "extends": "development",
+      "developmentClient": false,
+      "distribution": "internal"
+    },
+    "production": {
+      "extends": "preview",
+      "autoIncrement": true,
+      "distribution": "store"
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": { "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID" },
+      "android": { "track": "internal" }
+    }
+  }
+}
