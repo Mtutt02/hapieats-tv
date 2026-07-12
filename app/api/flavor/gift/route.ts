@@ -80,6 +80,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Balance changed — please retry' }, { status: 409 })
   }
 
+  // Compensating refund — points were already debited, so any downstream
+  // failure must return them or the sender loses Flavor Points for nothing.
+  const refundSender = async () => {
+    const { data: w } = await serviceClient
+      .from('flavor_wallets').select('balance').eq('user_id', user.id).single()
+    await serviceClient
+      .from('flavor_wallets')
+      .update({ balance: (w?.balance ?? 0) + pointsCost, updated_at: new Date().toISOString() })
+      .eq('user_id', user.id)
+  }
+
   // 3. Record gift event
   const { data: giftEvent, error: giftError } = await serviceClient
     .from('flavor_gift_events')
@@ -95,16 +106,23 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (giftError || !giftEvent) {
-    return NextResponse.json({ error: 'Failed to record gift' }, { status: 500 })
+    await refundSender()
+    return NextResponse.json({ error: 'Failed to record gift — your points were refunded.' }, { status: 500 })
   }
 
-  // 4. Credit creator earnings
-  await serviceClient.from('creator_flavor_earnings').insert({
+  // 4. Credit creator earnings — if this fails, roll back the gift event + refund
+  const { error: earnError } = await serviceClient.from('creator_flavor_earnings').insert({
     creator_id: creatorId,
     gift_event_id: giftEvent.id,
     points_earned: creatorShare,
     status: 'pending',
   })
+
+  if (earnError) {
+    await serviceClient.from('flavor_gift_events').delete().eq('id', giftEvent.id)
+    await refundSender()
+    return NextResponse.json({ error: 'Failed to credit the creator — your points were refunded.' }, { status: 500 })
+  }
 
   return NextResponse.json({
     success: true,
