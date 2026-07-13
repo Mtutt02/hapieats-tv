@@ -35,6 +35,19 @@ export default async function StationsPage() {
           </p>
         </div>
 
+        {/* Global Foods designated section callout */}
+        <Link
+          href="/global-foods"
+          className="group mb-8 flex items-center gap-4 rounded-2xl border border-border bg-gradient-to-r from-primary/10 to-transparent p-4 hover:border-primary/50 transition-colors"
+        >
+          <span className="text-3xl flex-shrink-0">🌍</span>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm group-hover:text-primary transition-colors">Global Foods</p>
+            <p className="text-xs text-muted-foreground">A world tour on your plate — browse recipes by region.</p>
+          </div>
+          <span className="text-xs font-semibold text-primary flex-shrink-0">Explore →</span>
+        </Link>
+
         {/* Featured — first station */}
         {stations.length > 0 && (
           <section className="mb-10">

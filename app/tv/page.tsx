@@ -26,6 +26,7 @@ const STATION_DIAL: string[] = [
   'lifestyle',        // 10 — The Good Life
   'mukbang',          // 11 — Feast Mode
   'food-reviews',     // 12 — Taste Test
+  'global-foods',     // 13 — Around the World
 ]
 
 interface StationRow {

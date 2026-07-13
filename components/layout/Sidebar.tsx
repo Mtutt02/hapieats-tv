@@ -9,6 +9,7 @@ import {
   UploadCloud, Clapperboard, LayoutDashboard, DollarSign,
   Wallet, Target, Coins, Trophy, Settings, HelpCircle,
   BadgeDollarSign, X, ChevronDown, Zap, ShieldCheck, MessageCircleQuestion,
+  Globe,
 } from 'lucide-react'
 import Logo from './Logo'
 import { cn } from '@/lib/utils'
@@ -32,8 +33,9 @@ const ALWAYS_VISIBLE: NavItem[] = [
 ]
 
 const DISCOVER_ITEMS: NavItem[] = [
-  { href: '/tv',       icon: Tv,         label: 'Watch TV'  },
-  { href: '/trending', icon: TrendingUp, label: 'Trending'  },
+  { href: '/tv',           icon: Tv,         label: 'Watch TV'      },
+  { href: '/global-foods', icon: Globe,      label: 'Global Foods'  },
+  { href: '/trending',     icon: TrendingUp, label: 'Trending'      },
 ]
 
 const LEARN_ITEMS: NavItem[] = [
