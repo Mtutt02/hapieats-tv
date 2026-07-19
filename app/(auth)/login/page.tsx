@@ -25,30 +25,33 @@ function LoginContent() {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setError(error.message)
+    // Sign in server-side so a username (not just an email) can be used without
+    // leaking account emails to the client.
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: email, password }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.success) {
+      setError(data.error ?? 'Invalid login credentials')
       setLoading(false)
       return
     }
-    if (redirect === '/' && data.user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', data.user.id)
-        .single()
-      if (profile?.role && ['superadmin', 'admin', 'moderator'].includes(profile.role)) {
-        router.push('/admin')
-        return
-      }
+    if (redirect === '/' && ['superadmin', 'admin', 'moderator'].includes(data.role)) {
+      router.push('/admin')
+      router.refresh()
+      return
     }
     router.push(redirect)
+    router.refresh()
   }
 
   // Magic link — email the user a one-time sign-in link that lands on /auth/callback
   const handleMagicLink = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email) { setError('Enter your email first'); return }
+    if (!email.includes('@')) { setError('Enter your email address (not a username) to get a magic link'); return }
     setLoading(true)
     setError(null)
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirect)}`
@@ -94,12 +97,12 @@ function LoginContent() {
           ) : (
             <form onSubmit={mode === 'magic' ? handleMagicLink : handleLogin} className="space-y-5">
               <div className="space-y-1.5">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{mode === 'magic' ? 'Email' : 'Email or username'}</Label>
                 <Input
                   id="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="you@example.com"
+                  type={mode === 'magic' ? 'email' : 'text'}
+                  autoComplete={mode === 'magic' ? 'email' : 'username'}
+                  placeholder={mode === 'magic' ? 'you@example.com' : 'you@example.com or username'}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
