@@ -14,8 +14,11 @@ export default function ForgotPasswordPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    // Route the recovery link through /auth/callback so the one-time code is
+    // exchanged for a session BEFORE the user lands on /reset-password. Landing
+    // there directly leaves no session, and updateUser() would fail.
     await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/reset-password`,
+      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
     })
     setLoading(false)
     setSubmitted(true)
