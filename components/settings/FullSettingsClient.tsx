@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { CheckCircle2, AlertTriangle, User, Lock, Eye, Bell, Trash2, Camera, Loader2 } from 'lucide-react'
+import { CheckCircle2, User, Lock, Eye, Bell, Trash2, Camera, Loader2 } from 'lucide-react'
 import type { Profile } from '@/types'
+import ChangePasswordForm from '@/components/settings/ChangePasswordForm'
 
 interface Props {
   profile: Profile
@@ -66,13 +67,6 @@ export default function FullSettingsClient({ profile, email }: Props) {
   const [privacyLoading, setPrivacyLoading] = useState(false)
   const [privacySaved, setPrivacySaved] = useState(false)
 
-  // Password
-  const [currentPw, setCurrentPw] = useState('')
-  const [newPw, setNewPw] = useState('')
-  const [confirmPw, setConfirmPw] = useState('')
-  const [pwLoading, setPwLoading] = useState(false)
-  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
   // Delete
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleteLoading, setDeleteLoading] = useState(false)
@@ -123,26 +117,6 @@ export default function FullSettingsClient({ profile, email }: Props) {
     setPrivacyLoading(false)
     setPrivacySaved(true)
     setTimeout(() => setPrivacySaved(false), 2500)
-  }
-
-  const changePassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (newPw !== confirmPw) { setPwMsg({ ok: false, text: 'Passwords do not match' }); return }
-    if (newPw.length < 8) { setPwMsg({ ok: false, text: 'Password must be at least 8 characters' }); return }
-    setPwLoading(true)
-    const res = await fetch('/api/user/password', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newPassword: newPw }),
-    })
-    const data = await res.json()
-    setPwLoading(false)
-    if (data.success) {
-      setPwMsg({ ok: true, text: 'Password updated successfully' })
-      setCurrentPw(''); setNewPw(''); setConfirmPw('')
-    } else {
-      setPwMsg({ ok: false, text: data.error ?? 'Failed to update password' })
-    }
   }
 
   const deleteAccount = async () => {
@@ -364,43 +338,9 @@ export default function FullSettingsClient({ profile, email }: Props) {
 
         {/* SECURITY */}
         {tab === 'security' && (
-          <form onSubmit={changePassword}>
-            <SectionCard title="Change Password" description="We recommend a unique password of at least 8 characters.">
-              <div>
-                <Label htmlFor="newPw">New Password</Label>
-                <Input
-                  id="newPw"
-                  type="password"
-                  value={newPw}
-                  onChange={e => setNewPw(e.target.value)}
-                  className="mt-1.5"
-                  autoComplete="new-password"
-                />
-              </div>
-              <div>
-                <Label htmlFor="confirmPw">Confirm New Password</Label>
-                <Input
-                  id="confirmPw"
-                  type="password"
-                  value={confirmPw}
-                  onChange={e => setConfirmPw(e.target.value)}
-                  className="mt-1.5"
-                  autoComplete="new-password"
-                />
-              </div>
-
-              {pwMsg && (
-                <div className={`flex items-center gap-2 text-sm ${pwMsg.ok ? 'text-green-500' : 'text-destructive'}`}>
-                  {pwMsg.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-                  {pwMsg.text}
-                </div>
-              )}
-
-              <Button type="submit" disabled={pwLoading}>
-                {pwLoading ? 'Updating…' : 'Update Password'}
-              </Button>
-            </SectionCard>
-          </form>
+          <SectionCard title="Change Password" description="We recommend a unique password of at least 8 characters. You'll need your current password to confirm.">
+            <ChangePasswordForm />
+          </SectionCard>
         )}
 
         {/* DANGER ZONE */}
