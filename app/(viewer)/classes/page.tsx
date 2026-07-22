@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
 import Link from 'next/link'
 import Image from 'next/image'
-import { GraduationCap, BookOpen, Users, Clock } from 'lucide-react'
+import { GraduationCap, BookOpen, Users, Clock, Play, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
@@ -70,8 +70,97 @@ function formatDuration(s: number) {
 }
 
 export default async function ClassesPage({ searchParams }: PageProps) {
-  const supabase = createServiceClient()
+  const authClient = createClient()
+  const supabase   = createServiceClient()
   const { type, category, level } = searchParams
+  const { data: { user } } = await authClient.auth.getUser()
+
+  // ── Enrolled courses + progress (logged-in only) ──────────────────────────
+  type EnrolledEntry = {
+    courseId: string
+    course: { id: string; title: string; thumbnail_url: string | null; lesson_count: number; total_duration_seconds: number; level: string | null }
+    completedLessons: number
+    lastLessonId: string | null
+  }
+  let enrolled: EnrolledEntry[] = []
+
+  if (user) {
+    const { data: enrollments } = await supabase
+      .from('course_enrollments')
+      .select('course_id, course:courses(id, title, thumbnail_url, lesson_count, total_duration_seconds, level)')
+      .eq('user_id', user.id)
+      .limit(20)
+
+    if (enrollments && enrollments.length > 0) {
+      const courseIds = enrollments.map(e => e.course_id)
+
+      // Get all sections then lessons to find lesson IDs per course
+      const { data: sections } = await supabase
+        .from('course_sections')
+        .select('id, course_id')
+        .in('course_id', courseIds)
+      const sectionIds = (sections ?? []).map(s => s.id)
+
+      const { data: lessons } = sectionIds.length > 0
+        ? await supabase
+            .from('course_lessons')
+            .select('id, section_id, position')
+            .in('section_id', sectionIds)
+            .order('position')
+        : { data: [] }
+
+      // Map section → course
+      const sectionToCourse = new Map<string, string>()
+      for (const s of sections ?? []) sectionToCourse.set(s.id, s.course_id)
+
+      // Group lesson IDs per course
+      const lessonsByCourse = new Map<string, { id: string; position: number }[]>()
+      for (const l of lessons ?? []) {
+        const cid = sectionToCourse.get((l as { section_id: string }).section_id)
+        if (!cid) continue
+        if (!lessonsByCourse.has(cid)) lessonsByCourse.set(cid, [])
+        lessonsByCourse.get(cid)!.push({ id: l.id, position: (l as { position: number }).position ?? 0 })
+      }
+
+      const allLessonIds = (lessons ?? []).map(l => l.id)
+      const { data: progress } = allLessonIds.length > 0
+        ? await supabase
+            .from('lesson_progress')
+            .select('lesson_id, completed, progress_seconds, updated_at')
+            .eq('user_id', user.id)
+            .in('lesson_id', allLessonIds)
+            .order('updated_at', { ascending: false })
+        : { data: [] }
+
+      const progressMap = new Map((progress ?? []).map(p => [p.lesson_id, p]))
+
+      enrolled = enrollments
+        .filter(e => e.course)
+        .map(e => {
+          const cls = e.course as EnrolledEntry['course']
+          const courseLessons = (lessonsByCourse.get(e.course_id) ?? []).sort((a, b) => a.position - b.position)
+          const completedLessons = courseLessons.filter(l => progressMap.get(l.id)?.completed).length
+
+          // Last-touched lesson: most recent progress, or first incomplete, or first
+          const touched = courseLessons
+            .filter(l => progressMap.has(l.id))
+            .sort((a, b) => {
+              const at = progressMap.get(a.id)?.updated_at ?? ''
+              const bt = progressMap.get(b.id)?.updated_at ?? ''
+              return bt.localeCompare(at)
+            })
+          const lastLessonId =
+            touched[0]?.id ??
+            courseLessons.find(l => !progressMap.get(l.id)?.completed)?.id ??
+            courseLessons[0]?.id ??
+            null
+
+          return { courseId: e.course_id, course: cls, completedLessons, lastLessonId }
+        })
+    }
+  }
+
+  const enrolledIds = new Set(enrolled.map(e => e.courseId))
 
   let query = supabase
     .from('courses')
@@ -90,25 +179,74 @@ export default async function ClassesPage({ searchParams }: PageProps) {
   const { data: classes } = await query.limit(48)
   const currentParams = { type, category, level }
 
+  // Filter browse grid to exclude already-enrolled courses
+  const browseClasses = (classes ?? []).filter(c => !enrolledIds.has(c.id))
+
   return (
     <AppShell>
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8 space-y-10">
         {/* Header */}
-        <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <GraduationCap className="h-8 w-8 text-primary" />
-              <h1 className="text-3xl font-bold">Cooking Classes</h1>
-            </div>
-            <p className="text-muted-foreground text-lg">Learn from expert chefs and home cooks</p>
+        <div className="mb-2">
+          <div className="flex items-center gap-3 mb-1">
+            <GraduationCap className="h-8 w-8 text-primary" />
+            <h1 className="text-3xl font-bold">Cooking Classes</h1>
           </div>
-          <Link
-            href="/academy"
-            className="hidden sm:flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
-          >
-            + Teach a Class
-          </Link>
+          <p className="text-muted-foreground text-lg">Learn from expert chefs and home cooks</p>
         </div>
+
+        {/* ── My Learning ──────────────────────────────────────────────────── */}
+        {enrolled.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Play className="h-5 w-5 text-primary" /> My Learning
+              </h2>
+              <span className="text-sm text-zinc-500">{enrolled.length} enrolled</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {enrolled.map(({ courseId, course, completedLessons, lastLessonId }) => {
+                const pct = course.lesson_count ? Math.min(100, Math.round((completedLessons / course.lesson_count) * 100)) : 0
+                const isComplete = pct === 100
+                const resumeHref = lastLessonId
+                  ? `/academy/course/${courseId}/learn?lesson=${lastLessonId}`
+                  : `/academy/course/${courseId}/learn`
+                return (
+                  <div key={courseId} className="group bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/40 transition-all duration-200">
+                    <div className="relative aspect-video bg-muted">
+                      {course.thumbnail_url
+                        ? <Image src={course.thumbnail_url} alt={course.title} fill className="object-cover" sizes="(max-width:640px) 100vw,(max-width:1024px) 50vw,33vw" />
+                        : <div className="w-full h-full flex items-center justify-center text-4xl">🎓</div>
+                      }
+                      {isComplete && (
+                        <div className="absolute top-2 right-2">
+                          <span className="flex items-center gap-1 bg-green-600/90 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                            <CheckCircle2 className="h-3 w-3" /> Done
+                          </span>
+                        </div>
+                      )}
+                      {course.level && (
+                        <div className="absolute bottom-2 left-2">
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${LEVEL_COLORS[course.level] ?? ''}`}>{course.level}</span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Progress bar */}
+                    <div className="h-1 bg-zinc-800"><div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} /></div>
+                    <div className="p-4 space-y-3">
+                      <div>
+                        <h3 className="font-bold text-sm leading-snug line-clamp-2">{course.title}</h3>
+                        <p className="text-xs text-zinc-400 mt-1">{completedLessons}/{course.lesson_count} lessons · {pct}% complete</p>
+                      </div>
+                      <Link href={resumeHref} className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">
+                        {isComplete ? <><CheckCircle2 className="h-4 w-4" /> Review</> : pct > 0 ? <><Play className="h-4 w-4" /> Resume</> : <><Play className="h-4 w-4" /> Start</>}
+                      </Link>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Filters */}
         <div className="space-y-3 mb-8">
@@ -169,10 +307,14 @@ export default async function ClassesPage({ searchParams }: PageProps) {
           </div>
         </div>
 
+        {/* Browse All / Discover */}
+        {enrolled.length > 0 && browseClasses.length > 0 && (
+          <h2 className="text-xl font-bold">Discover More</h2>
+        )}
         {/* Classes grid */}
-        {classes && classes.length > 0 ? (
+        {browseClasses.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {classes.map((cls) => {
+            {browseClasses.map((cls) => {
               const creator = cls.creator as { username: string; display_name: string | null; avatar_url: string | null } | null
               return (
                 <Link
@@ -255,7 +397,11 @@ export default async function ClassesPage({ searchParams }: PageProps) {
         ) : (
           <div className="text-center py-24">
             <GraduationCap className="h-16 w-16 mx-auto text-muted-foreground/40 mb-4" />
-            <h3 className="text-xl font-semibold mb-2">No classes found</h3>
+            <h3 className="text-xl font-semibold mb-2">
+              {enrolled.length > 0 && !type && !category && !level
+                ? "You're enrolled in all available classes!"
+                : 'No classes found'}
+            </h3>
             <p className="text-muted-foreground">
               {type || category || level
                 ? 'Try adjusting your filters to find more classes.'
