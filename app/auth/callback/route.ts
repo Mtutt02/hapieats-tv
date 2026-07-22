@@ -1,31 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { EmailOtpType } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 /**
  * /auth/callback
  *
- * Supabase redirects here after email verification.
- * 1. Exchange the one-time code for a session.
- * 2. Upsert the profiles row (belt-and-suspenders — the DB trigger should
- *    create it, but new installs may not have the trigger yet).
- * 3. Redirect to /dashboard (or whatever ?next= says).
+ * Supabase redirects here after email verification, magic-link sign-in, and
+ * password recovery. It accepts either transport Supabase may send:
+ *
+ *  - PKCE:  ?code=...              → exchangeCodeForSession (same-device only;
+ *                                    the code verifier lives in a signup cookie)
+ *  - OTP:   ?token_hash=...&type=… → verifyOtp (works cross-device, e.g. when the
+ *                                    email is opened on a phone)
+ *
+ * Then it upserts the profiles row (belt-and-suspenders — the DB trigger should
+ * create it, but new installs may not have the trigger yet) and redirects to
+ * ?next= (default /dashboard).
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
-  const code     = searchParams.get('code')
-  const next     = searchParams.get('next') ?? '/dashboard'
-  const redirect = searchParams.get('redirect') ?? next   // legacy compat
+  const code       = searchParams.get('code')
+  const tokenHash  = searchParams.get('token_hash')
+  const type       = searchParams.get('type') as EmailOtpType | null
+  const authError  = searchParams.get('error_description') ?? searchParams.get('error')
+  const next       = searchParams.get('next') ?? '/dashboard'
+  const redirect   = searchParams.get('redirect') ?? next   // legacy compat
 
-  if (!code) {
+  // Supabase can bounce back here with an error (e.g. expired/used link).
+  if (authError) {
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(authError)}`
+    )
+  }
+
+  if (!code && !tokenHash) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`)
   }
 
   const supabase = createClient()
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+
+  const { data, error } = tokenHash
+    ? await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type ?? 'email' })
+    : await supabase.auth.exchangeCodeForSession(code!)
 
   if (error || !data.user) {
-    console.error('[auth/callback] exchange error:', error?.message)
-    return NextResponse.redirect(`${origin}/login?error=verification_failed`)
+    console.error('[auth/callback] verification error:', error?.message)
+    return NextResponse.redirect(
+      `${origin}/login?error=${encodeURIComponent(error?.message ?? 'verification_failed')}`
+    )
   }
 
   const user    = data.user
