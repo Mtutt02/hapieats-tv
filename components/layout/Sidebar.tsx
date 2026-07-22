@@ -39,7 +39,6 @@ const DISCOVER_ITEMS: NavItem[] = [
 ]
 
 const LEARN_ITEMS: NavItem[] = [
-  { href: '/courses', icon: BookOpen,      label: 'Courses' },
   { href: '/classes', icon: GraduationCap, label: 'Classes' },
 ]
 
@@ -48,7 +47,7 @@ const CREATE_ITEMS: NavItem[] = [
   { href: '/studio/go-live',  icon: Zap,             label: 'Go Live'         },
   { href: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard'       },
   { href: '/studio',          icon: Clapperboard,    label: 'Studio'          },
-  { href: '/academy',         icon: GraduationCap,   label: 'Academy Studio'  },
+  { href: '/academy',         icon: GraduationCap,   label: 'Teach a Class'   },
 ]
 
 const EARN_ITEMS: NavItem[] = [

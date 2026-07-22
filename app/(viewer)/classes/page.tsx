@@ -1,22 +1,32 @@
 import type { Metadata } from 'next'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
-import ClassCard from '@/components/classes/ClassCard'
 import Link from 'next/link'
-import { GraduationCap, Zap } from 'lucide-react'
+import Image from 'next/image'
+import { GraduationCap, BookOpen, Users, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Class } from '@/types'
 
-export const revalidate = 60
+export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
   title: 'Cooking Classes',
-  description: 'Learn from expert chefs and home cooks. Browse live and recorded cooking classes on HapiEats TV.',
+  description: 'Learn from expert chefs and home cooks. Browse live, recorded, and hybrid cooking classes on HapiEats TV.',
 }
 
 interface PageProps {
-  searchParams: { type?: string; category?: string; skill?: string }
+  searchParams: { type?: string; category?: string; level?: string }
 }
+
+// Filters map onto the unified course backend:
+//   type  → courses.format   (recorded | live | hybrid)
+//   level → courses.level     (beginner | intermediate | advanced | professional)
+//   category → courses.category
+const types = [
+  { value: '', label: 'All' },
+  { value: 'recorded', label: 'Recorded' },
+  { value: 'live', label: 'Live' },
+  { value: 'hybrid', label: 'Live + Recorded' },
+]
 
 const categories = [
   { value: '', label: 'All' },
@@ -29,19 +39,20 @@ const categories = [
   { value: 'nutrition', label: 'Nutrition' },
 ]
 
-const types = [
-  { value: '', label: 'All' },
-  { value: 'live', label: 'Live Classes' },
-  { value: 'recorded', label: 'Recorded' },
-  { value: 'series', label: 'Series' },
-]
-
-const skills = [
+const levels = [
   { value: '', label: 'All Levels' },
   { value: 'beginner', label: 'Beginner' },
   { value: 'intermediate', label: 'Intermediate' },
   { value: 'advanced', label: 'Advanced' },
+  { value: 'professional', label: 'Pro' },
 ]
+
+const LEVEL_COLORS: Record<string, string> = {
+  beginner: 'bg-green-500/20 text-green-400',
+  intermediate: 'bg-yellow-500/20 text-yellow-400',
+  advanced: 'bg-red-500/20 text-red-400',
+  professional: 'bg-indigo-500/20 text-indigo-300',
+}
 
 function buildParams(current: Record<string, string | undefined>, update: Record<string, string>) {
   const params = new URLSearchParams()
@@ -52,73 +63,52 @@ function buildParams(current: Record<string, string | undefined>, update: Record
   return params.toString() ? `?${params.toString()}` : ''
 }
 
+function formatDuration(s: number) {
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 export default async function ClassesPage({ searchParams }: PageProps) {
-  const supabase = createClient()
-  const { type, category, skill } = searchParams
+  const supabase = createServiceClient()
+  const { type, category, level } = searchParams
 
-  // Base query for published classes
   let query = supabase
-    .from('classes')
+    .from('courses')
     .select(`
-      *,
-      instructor:profiles(id, username, display_name, avatar_url),
-      channel:channels(id, name, slug, thumbnail_url)
+      id, title, description, thumbnail_url, pricing_model, price_usd,
+      lesson_count, enrollment_count, total_duration_seconds, level, category, format,
+      creator:profiles!creator_id(id, username, display_name, avatar_url)
     `)
-    .eq('is_published', true)
-    .order('created_at', { ascending: false })
+    .eq('status', 'published')
+    .order('enrollment_count', { ascending: false })
 
-  if (type) query = query.eq('type', type)
+  if (type) query = query.eq('format', type)
   if (category) query = query.eq('category', category)
-  if (skill) query = query.eq('skill_level', skill)
+  if (level) query = query.eq('level', level)
 
   const { data: classes } = await query.limit(48)
-
-  // Featured: live classes happening soon (next 48h)
-  const now = new Date()
-  const in48h = new Date(now.getTime() + 48 * 60 * 60 * 1000)
-
-  const { data: featuredLive } = await supabase
-    .from('classes')
-    .select(`
-      *,
-      instructor:profiles(id, username, display_name, avatar_url),
-      channel:channels(id, name, slug, thumbnail_url)
-    `)
-    .eq('is_published', true)
-    .eq('type', 'live')
-    .gte('scheduled_at', now.toISOString())
-    .lte('scheduled_at', in48h.toISOString())
-    .order('scheduled_at', { ascending: true })
-    .limit(4)
-
-  const currentParams = { type, category, skill }
+  const currentParams = { type, category, level }
 
   return (
     <AppShell>
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <GraduationCap className="h-8 w-8 text-primary" />
-            <h1 className="text-3xl font-bold">Cooking Classes</h1>
+        <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <GraduationCap className="h-8 w-8 text-primary" />
+              <h1 className="text-3xl font-bold">Cooking Classes</h1>
+            </div>
+            <p className="text-muted-foreground text-lg">Learn from expert chefs and home cooks</p>
           </div>
-          <p className="text-muted-foreground text-lg">Learn from expert chefs and home cooks</p>
+          <Link
+            href="/academy"
+            className="hidden sm:flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            + Teach a Class
+          </Link>
         </div>
-
-        {/* Featured live section */}
-        {featuredLive && featuredLive.length > 0 && !type && !category && !skill && (
-          <section className="mb-10">
-            <div className="flex items-center gap-2 mb-4">
-              <Zap className="h-5 w-5 text-red-500" />
-              <h2 className="text-xl font-semibold">Upcoming Live Classes</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(featuredLive as Class[]).map((cls) => (
-                <ClassCard key={cls.id} class={cls} />
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* Filters */}
         <div className="space-y-3 mb-8">
@@ -142,7 +132,7 @@ export default async function ClassesPage({ searchParams }: PageProps) {
 
           <div className="flex flex-wrap gap-4">
             {/* Type filter */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {types.map((t) => (
                 <Link
                   key={t.value}
@@ -159,15 +149,15 @@ export default async function ClassesPage({ searchParams }: PageProps) {
               ))}
             </div>
 
-            {/* Skill filter */}
-            <div className="flex gap-2">
-              {skills.map((s) => (
+            {/* Level filter */}
+            <div className="flex flex-wrap gap-2">
+              {levels.map((s) => (
                 <Link
                   key={s.value}
-                  href={`/classes${buildParams(currentParams, { skill: s.value })}`}
+                  href={`/classes${buildParams(currentParams, { level: s.value })}`}
                   className={cn(
                     'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
-                    (skill ?? '') === s.value
+                    (level ?? '') === s.value
                       ? 'bg-secondary text-secondary-foreground'
                       : 'bg-muted hover:bg-muted/80 text-muted-foreground'
                   )}
@@ -182,16 +172,92 @@ export default async function ClassesPage({ searchParams }: PageProps) {
         {/* Classes grid */}
         {classes && classes.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {(classes as Class[]).map((cls) => (
-              <ClassCard key={cls.id} class={cls} />
-            ))}
+            {classes.map((cls) => {
+              const creator = cls.creator as { username: string; display_name: string | null; avatar_url: string | null } | null
+              return (
+                <Link
+                  key={cls.id}
+                  href={`/academy/course/${cls.id}`}
+                  className="group bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/40 hover:shadow-lg transition-all duration-200"
+                >
+                  {/* Thumbnail */}
+                  <div className="relative aspect-video bg-muted">
+                    {cls.thumbnail_url ? (
+                      <Image
+                        src={cls.thumbnail_url}
+                        alt={cls.title}
+                        fill
+                        className="object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-4xl">🎓</div>
+                    )}
+                    {/* Type badge */}
+                    {cls.format && cls.format !== 'recorded' && (
+                      <div className="absolute top-2 left-2">
+                        <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                          {cls.format === 'live' ? 'Live' : 'Live + Recorded'}
+                        </span>
+                      </div>
+                    )}
+                    {/* Price badge */}
+                    <div className="absolute top-2 right-2">
+                      {cls.pricing_model === 'free' ? (
+                        <span className="bg-green-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">FREE</span>
+                      ) : (
+                        <span className="bg-black/80 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                          ${cls.price_usd?.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    {/* Level badge */}
+                    {cls.level && (
+                      <div className="absolute bottom-2 left-2">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${LEVEL_COLORS[cls.level] ?? ''}`}>
+                          {cls.level}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Meta */}
+                  <div className="p-4">
+                    <h3 className="font-bold text-sm leading-snug line-clamp-2 mb-1 group-hover:text-primary transition-colors">
+                      {cls.title}
+                    </h3>
+                    {creator && (
+                      <p className="text-muted-foreground text-xs mb-2">
+                        {creator.display_name ?? creator.username}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <BookOpen className="h-3 w-3" />
+                        {cls.lesson_count} lessons
+                      </span>
+                      {cls.total_duration_seconds > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatDuration(cls.total_duration_seconds)}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        {cls.enrollment_count.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              )
+            })}
           </div>
         ) : (
           <div className="text-center py-24">
             <GraduationCap className="h-16 w-16 mx-auto text-muted-foreground/40 mb-4" />
             <h3 className="text-xl font-semibold mb-2">No classes found</h3>
             <p className="text-muted-foreground">
-              {type || category || skill
+              {type || category || level
                 ? 'Try adjusting your filters to find more classes.'
                 : 'Check back soon — new classes are being added all the time.'}
             </p>

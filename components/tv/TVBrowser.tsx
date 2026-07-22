@@ -2,15 +2,9 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronDown, Gamepad2, PictureInPicture2, SkipForward } from 'lucide-react'
+import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronUp, ChevronDown, PictureInPicture2 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-export interface TVPlaylistItem {
-  title: string
-  muxPlaybackId: string
-  duration: number | null // seconds; null → FALLBACK_DURATION
-}
-
 export interface TVChannel {
   number: number
   name: string
@@ -21,7 +15,6 @@ export interface TVChannel {
   isLive?: boolean
   currentTitle: string
   category: string
-  playlist?: TVPlaylistItem[]
 }
 
 interface Props {
@@ -41,49 +34,8 @@ function findVideoElement(container: HTMLElement): HTMLVideoElement | null {
   return null
 }
 
-// ─── "Live broadcast" scheduling ──────────────────────────────────────────────
-// Playback position is deterministic: totalDuration = sum of video durations,
-// offset = wall-clock seconds modulo totalDuration, then walk the playlist to
-// find the current video + seek position. Everyone tuning in at the same
-// moment sees the same "broadcast"; returning later shows different content.
-const FALLBACK_DURATION = 300 // seconds, used when a video has no duration
-
-function itemDuration(item: TVPlaylistItem): number {
-  return item.duration && item.duration > 0 ? item.duration : FALLBACK_DURATION
-}
-
-function computeSchedule(playlist: TVPlaylistItem[]): { index: number; offset: number } {
-  if (!playlist.length) return { index: 0, offset: 0 }
-  const total = playlist.reduce((sum, it) => sum + itemDuration(it), 0)
-  let t = (Date.now() / 1000) % total
-  for (let i = 0; i < playlist.length; i++) {
-    const d = itemDuration(playlist[i])
-    if (t < d) return { index: i, offset: Math.floor(t) }
-    t -= d
-  }
-  return { index: 0, offset: 0 }
-}
-
-// NOW / NEXT titles for a channel per the deterministic schedule (used by the
-// EPG guide; the tuned channel's OSD uses actual playback state instead).
-function channelNowNext(ch: TVChannel): { now: string; next?: string } {
-  if (ch.playlist && ch.playlist.length > 0) {
-    const { index } = computeSchedule(ch.playlist)
-    return {
-      now: ch.playlist[index].title,
-      next: ch.playlist.length > 1 ? ch.playlist[(index + 1) % ch.playlist.length].title : undefined,
-    }
-  }
-  return { now: ch.currentTitle }
-}
-
 // ─── On-Screen Display ────────────────────────────────────────────────────────
-function OSD({ channel, visible, nowTitle, nextTitle }: {
-  channel: TVChannel
-  visible: boolean
-  nowTitle?: string
-  nextTitle?: string
-}) {
+function OSD({ channel, visible }: { channel: TVChannel; visible: boolean }) {
   return (
     <div className={cn(
       'absolute bottom-0 left-0 right-0 z-20 transition-all duration-500 pointer-events-none',
@@ -108,10 +60,7 @@ function OSD({ channel, visible, nowTitle, nextTitle }: {
               <span className="text-3xl leading-none">{channel.icon}</span>
               <div>
                 <p className="text-white font-bold text-lg leading-tight">{channel.name}</p>
-                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">{nowTitle ?? channel.currentTitle}</p>
-                {nextTitle && (
-                  <p className="text-white/35 text-xs line-clamp-1 mt-0.5">Up next: {nextTitle}</p>
-                )}
+                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">{channel.currentTitle}</p>
               </div>
             </div>
           </div>
@@ -128,25 +77,15 @@ function OSD({ channel, visible, nowTitle, nextTitle }: {
 }
 
 // ─── Channel Guide (horizontal EPG strip inside TV screen) ────────────────────
-function showThumb(item: TVPlaylistItem): string | null {
-  return item.muxPlaybackId
-    ? `https://image.mux.com/${item.muxPlaybackId}/thumbnail.jpg?width=240&fit_mode=preserve&time=1`
-    : null
-}
-
 function ChannelGuide({
   channels,
   currentNumber,
-  currentShowIndex,
   onSelect,
-  onSelectShow,
   onClose,
 }: {
   channels: TVChannel[]
   currentNumber: number
-  currentShowIndex: number
   onSelect: (ch: TVChannel) => void
-  onSelectShow: (ch: TVChannel, showIndex: number) => void
   onClose: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -155,89 +94,62 @@ function ChannelGuide({
     if (!scrollRef.current) return
     const active = scrollRef.current.querySelector<HTMLElement>('[data-active="true"]')
     if (active) {
-      setTimeout(() => active.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80)
+      setTimeout(() => active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 80)
     }
   }, [])
 
   return (
-    <div className="absolute inset-x-0 bottom-0 top-0 z-30 flex flex-col bg-gradient-to-t from-black via-black/95 to-black/70">
+    <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black via-black/97 to-black/0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0">
+      <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">TV Guide</span>
-          <span className="text-[10px] text-zinc-600">— {channels.length} channels · pick a show to watch</span>
+          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Channel Guide</span>
+          <span className="text-[10px] text-zinc-600">— {channels.length} channels</span>
         </div>
         <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors p-1 rounded">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* Vertical list of channels; each lists its shows horizontally */}
+      {/* Horizontal scrolling channel strip */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-3"
-        style={{ scrollbarWidth: 'thin' }}
+        className="flex gap-2.5 overflow-x-auto px-4 pb-5 snap-x snap-mandatory"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       >
         {channels.map(ch => {
           const isActive = ch.number === currentNumber
-          const shows = ch.playlist ?? []
           return (
-            <div key={ch.number} data-active={isActive ? 'true' : undefined}>
-              {/* Channel header row */}
-              <button
-                onClick={() => { onSelect(ch); onClose() }}
-                className="flex items-center gap-2 mb-1.5 w-full text-left group"
-              >
+            <button
+              key={ch.number}
+              data-active={isActive ? 'true' : undefined}
+              onClick={() => { onSelect(ch); onClose() }}
+              className={cn(
+                'flex-shrink-0 snap-start w-44 rounded-xl p-3 border text-left',
+                'transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]',
+                isActive
+                  ? 'border-primary bg-primary/20 ring-1 ring-primary/40'
+                  : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-600 hover:bg-zinc-800/90',
+              )}
+            >
+              <div className="flex items-center gap-1.5 mb-2">
                 <span className={cn('font-mono text-[10px] font-bold', isActive ? 'text-primary' : 'text-zinc-500')}>
                   CH {String(ch.number).padStart(2, '0')}
                 </span>
-                <span className="text-lg leading-none">{ch.icon}</span>
-                <span className={cn('text-sm font-bold truncate group-hover:text-white', isActive ? 'text-primary' : 'text-zinc-200')}>
+                {ch.isLive && (
+                  <span className="bg-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded text-white animate-pulse">
+                    LIVE
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-2xl leading-none">{ch.icon}</span>
+                <span className={cn('text-sm font-bold truncate leading-tight', isActive ? 'text-primary' : 'text-white')}>
                   {ch.name}
                 </span>
-                {ch.isLive && (
-                  <span className="bg-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>
-                )}
-                {isActive && <span className="text-[9px] font-bold text-primary/70 uppercase tracking-wide">Watching</span>}
-              </button>
-
-              {/* Shows under this channel */}
-              {shows.length === 0 ? (
-                <p className="text-[11px] text-zinc-600 pl-1">No programming yet.</p>
-              ) : (
-                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-                  {shows.map((show, i) => {
-                    const onAir = isActive && i === currentShowIndex
-                    const th = showThumb(show)
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => onSelectShow(ch, i)}
-                        title={show.title}
-                        className={cn(
-                          'flex-shrink-0 w-32 rounded-lg overflow-hidden border text-left transition-all',
-                          'hover:scale-[1.03] active:scale-[0.98]',
-                          onAir ? 'border-primary ring-1 ring-primary/50' : 'border-zinc-800 hover:border-zinc-600',
-                        )}
-                      >
-                        <div className="relative aspect-video bg-black">
-                          {th && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={th} alt={show.title} loading="lazy" className="absolute inset-0 h-full w-full object-contain" />
-                          )}
-                          {onAir && (
-                            <span className="absolute top-1 left-1 bg-primary text-[8px] font-black px-1 py-0.5 rounded text-primary-foreground">ON NOW</span>
-                          )}
-                        </div>
-                        <p className={cn('px-1.5 py-1 text-[10px] font-semibold line-clamp-1', onAir ? 'text-primary' : 'text-zinc-300')}>
-                          {show.title}
-                        </p>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+              </div>
+              <p className="text-[11px] text-zinc-500 line-clamp-2 leading-snug">{ch.currentTitle}</p>
+            </button>
           )
         })}
       </div>
@@ -258,8 +170,7 @@ interface RemoteProps {
   onToggleFullscreen: () => void
   onTogglePiP: () => void
   onShowOSD: () => void
-  onSkip: () => void
-  canSkip: boolean
+  onMinimize: () => void
   muted: boolean
   showGuide: boolean
   isFullscreen: boolean
@@ -276,8 +187,6 @@ function PhysicalRemote({
   onToggleFullscreen,
   onTogglePiP,
   onShowOSD,
-  onSkip,
-  canSkip,
   muted,
   showGuide,
   isFullscreen,
@@ -331,9 +240,18 @@ function PhysicalRemote({
 
   return (
     <div
-      className="bg-[#0c0c0c] rounded-[28px] border border-zinc-800/80"
+      className="bg-[#0c0c0c] rounded-t-[28px] border border-zinc-800/80 border-b-0 relative"
       style={{ background: 'linear-gradient(175deg, #141414 0%, #080808 100%)' }}
     >
+      {/* Minimize button */}
+      <button
+        onClick={onMinimize}
+        className="absolute top-3 right-3 z-10 h-6 w-6 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/50 text-zinc-400 hover:text-white transition-colors"
+        title="Minimize remote"
+      >
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+
       {/* Grip handle */}
       <div className="flex justify-center pt-2.5 pb-1">
         <div className="flex gap-1">
@@ -446,11 +364,6 @@ function PhysicalRemote({
           </div>
         </div>
 
-        {/* Skip to next show in this channel */}
-        <Btn onClick={onSkip} className={cn('w-full h-9 gap-1.5', !canSkip && 'opacity-40')} small>
-          <SkipForward className="h-3 w-3" /> NEXT SHOW
-        </Btn>
-
         {/* Number pad */}
         <div className="grid grid-cols-3 gap-1.5">
           {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(n => (
@@ -478,42 +391,46 @@ function FloatingRemote(props: RemoteProps & { open: boolean; onToggle: () => vo
   const { open, onToggle, ...remoteProps } = props
   return (
     <div
-      className={cn(
-        'fixed z-50 flex flex-col items-end',
-        // Anchor bottom-right; stay above the mobile bottom nav on small screens
-        'right-4 bottom-[calc(64px+env(safe-area-inset-bottom))]',
-        'md:bottom-[calc(1rem+env(safe-area-inset-bottom))]',
-        'w-[210px] max-w-[calc(100vw-2rem)]',
-      )}
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center"
+      style={{ width: 210 }}
     >
-      {/* Remote body — collapses via max-height/opacity */}
+      {/* Remote body — collapses via max-height */}
       <div
         className={cn(
-          'w-full overflow-hidden rounded-[28px] transition-all duration-300 ease-in-out',
-          'shadow-[0_12px_40px_rgba(0,0,0,0.6)]',
-          open ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none',
+          'w-full overflow-hidden transition-all duration-300 ease-in-out',
+          open ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0',
         )}
       >
         <PhysicalRemote {...remoteProps} />
       </div>
 
-      {/* Corner pill — expands/collapses the remote (R key also toggles) */}
+      {/* Toggle handle — always visible */}
       <button
         onClick={onToggle}
-        aria-label={open ? 'Hide remote' : 'Show remote'}
         className={cn(
-          'flex items-center justify-center rounded-full select-none',
-          'bg-zinc-900 border border-zinc-700/80 text-zinc-300',
-          'shadow-[0_4px_16px_rgba(0,0,0,0.5)]',
-          'transition-all duration-300 ease-in-out',
-          'hover:text-emerald-400 hover:ring-2 hover:ring-emerald-500/60',
-          open ? 'h-9 w-9 mt-2' : 'h-12 w-12',
+          'w-[175px] flex flex-col items-center gap-0.5 py-2 px-4',
+          'rounded-t-2xl border border-b-0 border-zinc-800 transition-colors duration-150',
+          open ? 'hover:bg-zinc-800/60' : 'hover:bg-zinc-800/80',
         )}
+        style={{
+          background: open
+            ? 'linear-gradient(180deg, #161616 0%, #0e0e0e 100%)'
+            : 'linear-gradient(180deg, #222 0%, #161616 100%)',
+          boxShadow: '-6px 0 20px rgba(0,0,0,0.5), 6px 0 20px rgba(0,0,0,0.5)',
+        }}
       >
-        {open
-          ? <ChevronDown className="h-4 w-4" />
-          : <Gamepad2 className="h-5 w-5" />
-        }
+        <div className="w-8 h-0.5 rounded-full bg-zinc-700" />
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <span className="text-[9px] font-black tracking-[0.2em] text-zinc-500 uppercase">
+            {open ? 'Hide' : 'Remote'}
+          </span>
+          <ChevronUp
+            className={cn(
+              'h-2.5 w-2.5 text-zinc-600 transition-transform duration-300',
+              open && 'rotate-180',
+            )}
+          />
+        </div>
       </button>
     </div>
   )
@@ -530,39 +447,11 @@ export default function TVBrowser({ channels }: Props) {
   const [remoteOpen, setRemoteOpen] = useState(true)
   const [transitioning, setTransitioning] = useState(false)
   const [transitionNum, setTransitionNum] = useState<number | null>(null)
-  // Playlist playback state — index into current channel's playlist + seek
-  // offset. Only recomputed on channel tune-in (never mid-session) to avoid
-  // playback jumps.
-  const [playback, setPlayback] = useState<{ index: number; offset: number }>({ index: 0, offset: 0 })
-  const [showIntro, setShowIntro] = useState(false)
-
-  // First-visit intro — explains how the TV works
-  useEffect(() => {
-    try {
-      if (!localStorage.getItem('he-tv-intro-seen')) setShowIntro(true)
-    } catch { /* storage unavailable */ }
-  }, [])
-
-  const dismissIntro = () => {
-    setShowIntro(false)
-    try { localStorage.setItem('he-tv-intro-seen', '1') } catch { /* ignore */ }
-  }
 
   const containerRef = useRef<HTMLDivElement>(null)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const channel = channels[currentIndex]
-  const playlist = channel?.playlist
-  const nowItem = playlist && playlist.length > 0 ? playlist[playback.index % playlist.length] : null
-  const nextItem = playlist && playlist.length > 1 ? playlist[(playback.index + 1) % playlist.length] : null
-
-  // Initial tune-in: compute the broadcast schedule once on mount (client-only
-  // so SSR and hydration render the same frame)
-  useEffect(() => {
-    const pl = channels[0]?.playlist
-    if (pl && pl.length > 0) setPlayback(computeSchedule(pl))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // ── OSD ──
   const showOSDTemporarily = useCallback(() => {
@@ -579,36 +468,14 @@ export default function TVBrowser({ channels }: Props) {
   // ── Channel switching ──
   const switchChannel = useCallback((newIndex: number) => {
     const clamped = Math.max(0, Math.min(channels.length - 1, newIndex))
-    if (clamped === currentIndex) return // already tuned — don't recompute schedule
     setTransitioning(true)
     setTransitionNum(channels[clamped]?.number ?? null)
     setTimeout(() => {
-      // Tune-in: land on the deterministic "live broadcast" position
-      const pl = channels[clamped]?.playlist
-      setPlayback(pl && pl.length > 0 ? computeSchedule(pl) : { index: 0, offset: 0 })
       setCurrentIndex(clamped)
       setTransitioning(false)
       setTransitionNum(null)
     }, 300)
-  }, [channels, currentIndex])
-
-  // ── Playlist auto-advance (video ended → next item, loop at end) ──
-  const advancePlaylist = useCallback(() => {
-    const pl = channels[currentIndex]?.playlist
-    if (!pl || pl.length === 0) return
-    setPlayback(p => ({ index: (p.index + 1) % pl.length, offset: 0 }))
-    showOSDTemporarily()
-  }, [channels, currentIndex, showOSDTemporarily])
-
-  // ── Jump straight to a specific show in a channel (from the guide) ──
-  const jumpToShow = useCallback((ch: TVChannel, showIndex: number) => {
-    const idx = channels.findIndex(c => c.number === ch.number)
-    if (idx === -1) return
-    if (idx !== currentIndex) switchChannel(idx)
-    setPlayback({ index: showIndex, offset: 0 })
-    setShowGuide(false)
-    showOSDTemporarily()
-  }, [channels, currentIndex, switchChannel, showOSDTemporarily])
+  }, [channels])
 
   const channelUp = useCallback(() => switchChannel((currentIndex + 1) % channels.length), [currentIndex, channels.length, switchChannel])
   const channelDown = useCallback(() => switchChannel((currentIndex - 1 + channels.length) % channels.length), [currentIndex, channels.length, switchChannel])
@@ -639,16 +506,36 @@ export default function TVBrowser({ channels }: Props) {
   }, [])
 
   // ── Picture-in-Picture ──
+  const pipVideoRef = useRef<HTMLVideoElement | null>(null)
+
+  const setPipVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    pipVideoRef.current = el
+  }, [])
+
   const togglePiP = useCallback(async () => {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture()
-      } else if (containerRef.current) {
-        const video = findVideoElement(containerRef.current)
-        if (video) await video.requestPictureInPicture()
+        return
       }
-    } catch {
-      // PiP not available
+      // Try explicit ref first
+      let video = pipVideoRef.current
+      if (!video && containerRef.current) {
+        video = findVideoElement(containerRef.current)
+      }
+      // If still no video element, try Mux Player's native PiP
+      if (!video) {
+        const muxPlayer = containerRef.current?.querySelector('mux-player') as HTMLElement & { requestPictureInPicture?: () => Promise<void> }
+        if (muxPlayer?.requestPictureInPicture) {
+          await muxPlayer.requestPictureInPicture()
+          return
+        }
+      }
+      if (video) {
+        await video.requestPictureInPicture()
+      }
+    } catch (err) {
+      console.warn('PiP not available:', err)
     }
   }, [])
 
@@ -676,11 +563,10 @@ export default function TVBrowser({ channels }: Props) {
       else if (e.key === 'f' || e.key === 'F') toggleFullscreen()
       else if (e.key === 'p' || e.key === 'P') togglePiP()
       else if (e.key === 'r' || e.key === 'R') setRemoteOpen(v => !v)
-      else if (e.key === 'n' || e.key === 'N' || e.key === '.') advancePlaylist()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [channelUp, channelDown, toggleFullscreen, togglePiP, advancePlaylist])
+  }, [channelUp, channelDown, toggleFullscreen, togglePiP])
 
   const remoteProps: RemoteProps = {
     channels,
@@ -694,8 +580,7 @@ export default function TVBrowser({ channels }: Props) {
     onToggleFullscreen: toggleFullscreen,
     onTogglePiP: togglePiP,
     onShowOSD: showOSDTemporarily,
-    onSkip: advancePlaylist,
-    canSkip: !!(playlist && playlist.length > 1),
+    onMinimize: () => setRemoteOpen(false),
     muted,
     showGuide,
     isFullscreen,
@@ -737,31 +622,21 @@ export default function TVBrowser({ channels }: Props) {
 
           {/* Video content */}
           <div className={cn('absolute inset-0 transition-opacity duration-300', transitioning ? 'opacity-0' : 'opacity-100')}>
-            {nowItem && playlist ? (
-              <MuxPlayerWrapper
-                key={`${channel?.number}-${playback.index % playlist.length}`}
-                playbackId={nowItem.muxPlaybackId}
-                muted={muted}
-                startTime={playback.offset}
-                onEnded={advancePlaylist}
-              />
-            ) : channel?.videoUrl ? (
+            {channel?.videoUrl ? (
               <video
                 key={channel.videoUrl}
+                ref={(el) => { if (el) setPipVideoRef(el) }}
                 src={channel.videoUrl}
                 autoPlay muted={muted} loop playsInline
                 className="w-full h-full object-cover"
               />
             ) : channel?.muxPlaybackId ? (
-              <MuxPlayerWrapper playbackId={channel.muxPlaybackId} muted={muted} isLive={channel.isLive} />
+              <MuxPlayerWrapper playbackId={channel.muxPlaybackId} muted={muted} isLive={channel.isLive} onVideoReady={setPipVideoRef} />
             ) : (
-              <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4 px-6 text-center">
+              <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4">
                 <span className="text-7xl">{channel?.icon}</span>
                 <p className="text-white font-bold text-2xl">{channel?.name}</p>
                 <p className="text-zinc-500 text-sm">{channel?.description}</p>
-                <p className="text-zinc-600 text-xs font-mono tracking-wide">
-                  No programming yet — be the first to post to {channel?.name}
-                </p>
               </div>
             )}
           </div>
@@ -776,14 +651,7 @@ export default function TVBrowser({ channels }: Props) {
           )}
 
           {/* OSD */}
-          {channel && (
-            <OSD
-              channel={channel}
-              visible={showOSD && !showGuide && !transitioning}
-              nowTitle={nowItem?.title}
-              nextTitle={nextItem?.title}
-            />
-          )}
+          {channel && <OSD channel={channel} visible={showOSD && !showGuide && !transitioning} />}
 
           {/* PiP badge */}
           {isPiP && (
@@ -798,9 +666,7 @@ export default function TVBrowser({ channels }: Props) {
             <ChannelGuide
               channels={channels}
               currentNumber={channel.number}
-              currentShowIndex={playback.index}
               onSelect={selectChannel}
-              onSelectShow={jumpToShow}
               onClose={() => setShowGuide(false)}
             />
           )}
@@ -827,68 +693,55 @@ export default function TVBrowser({ channels }: Props) {
           onToggle={() => setRemoteOpen(v => !v)}
         />
       )}
-
-      {/* ── FIRST-VISIT INTRO ── */}
-      {showIntro && (
-        <div
-          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/75 p-4"
-          role="dialog"
-          aria-label="How HapiEats TV works"
-          onClick={dismissIntro}
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-950 p-6 text-center shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 text-3xl" aria-hidden>
-              📺
-            </div>
-            <h2 className="text-lg font-black tracking-tight text-white">Welcome to HapiEats TV</h2>
-            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-              Every channel is a station broadcasting <b className="text-zinc-200">nonstop</b> —
-              tune in and the show is already on, just like real TV. Videos play back-to-back
-              continuously, so there&apos;s nothing to pick and nothing to queue.
-            </p>
-            <div className="mt-4 space-y-1.5 text-left text-xs text-zinc-400">
-              <p><b className="text-zinc-200">Flip channels</b> — remote, ↑/↓ arrow keys, or type a channel number</p>
-              <p><b className="text-zinc-200">See what&apos;s on</b> — press G for the channel guide</p>
-              <p><b className="text-zinc-200">Sit back</b> — when one video ends, the next starts automatically</p>
-            </div>
-            <button
-              onClick={dismissIntro}
-              className="mt-5 w-full rounded-xl bg-white py-2.5 text-sm font-bold text-black transition hover:bg-zinc-200"
-            >
-              Set the channel and enjoy
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
 
 // ─── Lazy Mux wrapper ─────────────────────────────────────────────────────────
-function MuxPlayerWrapper({ playbackId, muted, isLive, startTime, onEnded }: {
+function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady }: {
   playbackId: string
   muted: boolean
   isLive?: boolean
-  startTime?: number
-  onEnded?: () => void
+  onVideoReady?: (el: HTMLVideoElement | null) => void
 }) {
+  const playerRef = useRef<HTMLElement | null>(null)
   const [MuxPlayer, setMuxPlayer] = useState<React.ComponentType<Record<string, unknown>> | null>(null)
+
   useEffect(() => {
     import('@mux/mux-player-react').then(m => setMuxPlayer(() => m.default))
   }, [])
+
+  // Watch for the video element in Mux Player's shadow DOM
+  useEffect(() => {
+    if (!playerRef.current || !onVideoReady) return
+    const el = playerRef.current
+    const check = () => {
+      const video = el.shadowRoot?.querySelector('video')
+      if (video) {
+        onVideoReady(video as HTMLVideoElement)
+        return true
+      }
+      return false
+    }
+    // Poll for up to 5s until the video element appears in shadow DOM
+    if (!check()) {
+      const interval = setInterval(() => {
+        if (check()) clearInterval(interval)
+      }, 200)
+      setTimeout(() => clearInterval(interval), 5000)
+    }
+    return () => onVideoReady(null)
+  }, [MuxPlayer]) // eslint-disable-line
+
   if (!MuxPlayer) return null
   return (
     <MuxPlayer
+      ref={playerRef}
       playbackId={playbackId}
       muted={muted}
       autoPlay
-      loop={onEnded ? false : !isLive}
+      loop={!isLive}
       streamType={isLive ? 'live' : 'on-demand'}
-      startTime={startTime && startTime > 0 ? startTime : undefined}
-      onEnded={onEnded}
       style={{
         '--controls': 'none',
         '--media-object-fit': 'cover',

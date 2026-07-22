@@ -34,7 +34,7 @@ export default function AcademyDashboard() {
   const totalEnrollments = courses.reduce((a, c) => a + (c.enrollment_count ?? 0), 0)
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'courses', label: 'Courses' },
+    { key: 'courses', label: 'Classes' },
     { key: 'cohorts', label: 'Live Cohorts' },
     { key: 'earnings', label: 'Earnings' },
   ]
@@ -45,20 +45,20 @@ export default function AcademyDashboard() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2 text-zinc-100">
             <GraduationCap className="h-6 w-6" />
-            Creator Academy
+            Academy Studio
           </h1>
-          <p className="text-zinc-400 mt-1 text-sm">Build courses, teach cohorts, earn from the Pro pool</p>
+          <p className="text-zinc-400 mt-1 text-sm">Build classes, teach live cohorts, earn from the Pro pool</p>
         </div>
         <Button asChild className="gap-2">
           <Link href="/academy/new">
             <Plus className="h-4 w-4" />
-            New course
+            New class
           </Link>
         </Button>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <StatTile icon={<BookOpen className="h-4 w-4" />} label="Total courses" value={totalCourses} />
+        <StatTile icon={<BookOpen className="h-4 w-4" />} label="Total classes" value={totalCourses} />
         <StatTile icon={<Users className="h-4 w-4" />} label="Total enrollments" value={totalEnrollments} />
         <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/60 flex flex-col justify-between">
           <div className="flex items-center gap-1 text-sm text-zinc-400">
@@ -143,11 +143,11 @@ function CoursesTab({ courses, loading, error }: { courses: Course[]; loading: b
     return (
       <div className="text-center py-24 border border-zinc-800 rounded-xl bg-zinc-900/40">
         <GraduationCap className="h-14 w-14 mx-auto text-zinc-700 mb-4" />
-        <h3 className="text-lg font-semibold text-zinc-200 mb-2">No courses yet</h3>
-        <p className="text-zinc-400 mb-6">Create your first course to start teaching.</p>
+        <h3 className="text-lg font-semibold text-zinc-200 mb-2">No classes yet</h3>
+        <p className="text-zinc-400 mb-6">Create your first class to start teaching.</p>
         <Button asChild className="gap-2">
           <Link href="/academy/new">
-            <Plus className="h-4 w-4" /> New course
+            <Plus className="h-4 w-4" /> New class
           </Link>
         </Button>
       </div>

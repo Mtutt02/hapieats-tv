@@ -198,9 +198,13 @@ export default async function WatchPage({ params }: PageProps) {
     }
   }
 
-  // Track view (fire-and-forget)
+  // Track view
   if (hasAccess) {
-    supabase.from('video_views').insert({ video_id: video.id, viewer_id: user?.id ?? null })
+    try {
+      await supabase.from('video_views').insert({ video_id: video.id, viewer_id: user?.id ?? null })
+    } catch {
+      // Silently fail — view tracking isn't critical
+    }
   }
 
   // Fetch comments
@@ -274,7 +278,6 @@ export default async function WatchPage({ params }: PageProps) {
     .eq('status', 'ready')
     .eq('visibility', 'public')
     .neq('id', video.id)
-    .neq('is_clip', true)
     .order('published_at', { ascending: false })
     .limit(8)
 
@@ -295,7 +298,6 @@ export default async function WatchPage({ params }: PageProps) {
         .eq('visibility', 'public')
         .neq('id', video.id)
         .neq('creator_id', video.creator_id)
-        .neq('is_clip', true)
         .order('view_count', { ascending: false })
         .limit(8)
     : { data: [] }
@@ -315,7 +317,7 @@ export default async function WatchPage({ params }: PageProps) {
     name: video.title,
     description: (video.description as string | null) ?? `Watch ${video.title} on HapiEats TV.`,
     thumbnailUrl: vid.mux_playback_id
-      ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=1280&height=720&fit_mode=preserve&time=0`
+      ? `https://image.mux.com/${vid.mux_playback_id}/thumbnail.jpg?width=1280&height=720&time=0`
       : 'https://hapieatstv.com/icon',
     uploadDate: video.created_at ?? new Date().toISOString(),
     contentUrl: `https://hapieatstv.com/watch/${video.id}`,
@@ -343,7 +345,7 @@ export default async function WatchPage({ params }: PageProps) {
       <Script
         id="video-schema"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(videoJsonLd).replace(/</g, '\\u003c') }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(videoJsonLd) }}
       />
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* ── Player column ── */}

@@ -165,7 +165,7 @@ export default async function StudioHomePage() {
                   </Link>
 
                   <Link
-                    href="/studio/classes/new"
+                    href="/academy/new"
                     className="group relative flex flex-col gap-3 p-5 rounded-2xl border border-zinc-800 hover:border-primary/50 hover:bg-zinc-900/80 transition-all"
                   >
                     <div className="h-10 w-10 rounded-xl bg-zinc-800 flex items-center justify-center">
@@ -281,7 +281,7 @@ export default async function StudioHomePage() {
                     { icon: UploadCloud, label: 'Upload a video', href: '/studio/upload', done: totalVideos > 0 },
                     { icon: Wand2,       label: 'Try the TV Studio editor', href: '/studio/editor', done: false },
                     { icon: Radio,       label: 'Go live for the first time', href: '/studio/go-live', done: false },
-                    { icon: GraduationCap, label: 'Create a cooking class', href: '/studio/classes/new', done: false },
+                    { icon: GraduationCap, label: 'Create a cooking class', href: '/academy/new', done: false },
                     { icon: DollarSign,  label: 'Set up monetization', href: '/creator/chef-verification', done: !!profile?.is_creator },
                   ].map(({ icon: Icon, label, href, done }) => (
                     <Link key={label} href={href} className="flex items-center gap-3 group">
@@ -302,7 +302,7 @@ export default async function StudioHomePage() {
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-1">
                 {[
                   { label: 'All Videos',       href: '/studio/videos',       icon: Film },
-                  { label: 'Classes',           href: '/studio/classes',      icon: GraduationCap },
+                  { label: 'Classes',           href: '/academy',             icon: GraduationCap },
                   { label: 'Analytics',         href: '/dashboard',           icon: BarChart2 },
                   { label: 'Channel Settings',  href: '/dashboard/settings',  icon: Settings },
                 ].map(({ label, href, icon: Icon }) => (

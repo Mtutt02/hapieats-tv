@@ -8,7 +8,7 @@ const STATIC_PAGES: MetadataRoute.Sitemap = [
   { url: BASE, lastModified: new Date(), changeFrequency: 'daily', priority: 1 },
   { url: `${BASE}/trending`, lastModified: new Date(), changeFrequency: 'hourly', priority: 0.9 },
   { url: `${BASE}/live`, lastModified: new Date(), changeFrequency: 'always', priority: 0.9 },
-  { url: `${BASE}/courses`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.8 },
+  { url: `${BASE}/classes`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.8 },
   { url: `${BASE}/stations`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.8 },
   { url: `${BASE}/global-foods`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.7 },
   { url: `${BASE}/search`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.7 },
@@ -69,7 +69,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }))
 
     const coursePages: MetadataRoute.Sitemap = (courses ?? []).map(c => ({
-      url: `${BASE}/courses/${c.id}`,
+      url: `${BASE}/academy/course/${c.id}`,
       lastModified: c.updated_at ? new Date(c.updated_at) : new Date(),
       changeFrequency: 'monthly',
       priority: 0.6,
