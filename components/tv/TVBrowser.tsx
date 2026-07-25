@@ -5,6 +5,12 @@ import { cn } from '@/lib/utils'
 import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronUp, ChevronDown, PictureInPicture2 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+export interface TVPlaylistItem {
+  title: string
+  muxPlaybackId: string
+  duration: number | null
+}
+
 export interface TVChannel {
   number: number
   name: string
@@ -15,6 +21,7 @@ export interface TVChannel {
   isLive?: boolean
   currentTitle: string
   category: string
+  playlist?: TVPlaylistItem[]
 }
 
 interface Props {
@@ -447,6 +454,8 @@ export default function TVBrowser({ channels }: Props) {
   const [remoteOpen, setRemoteOpen] = useState(true)
   const [transitioning, setTransitioning] = useState(false)
   const [transitionNum, setTransitionNum] = useState<number | null>(null)
+  const [playlistIndex, setPlaylistIndex] = useState(0)
+  const playlistTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -460,10 +469,30 @@ export default function TVBrowser({ channels }: Props) {
     osdTimerRef.current = setTimeout(() => setShowOSD(false), 4500)
   }, [])
 
+  // Reset playlist index when channel changes
   useEffect(() => {
+    setPlaylistIndex(0)
     showOSDTemporarily()
+    // Clean up any pending playlist timers
+    playlistTimersRef.current.forEach(t => clearTimeout(t))
+    playlistTimersRef.current = []
     return () => { if (osdTimerRef.current) clearTimeout(osdTimerRef.current) }
   }, [currentIndex]) // eslint-disable-line
+
+  // ── Playlist auto-advance ──
+  const advancePlaylist = useCallback(() => {
+    const ch = channels[currentIndex]
+    if (!ch?.playlist?.length) return
+    const nextIdx = (playlistIndex + 1) % ch.playlist.length
+    // Show a brief transition flash
+    setTransitionNum(ch.number)
+    setTransitioning(true)
+    setTimeout(() => {
+      setPlaylistIndex(nextIdx)
+      setTransitioning(false)
+      setTransitionNum(null)
+    }, 200)
+  }, [channels, currentIndex, playlistIndex])
 
   // ── Channel switching ──
   const switchChannel = useCallback((newIndex: number) => {
@@ -622,23 +651,46 @@ export default function TVBrowser({ channels }: Props) {
 
           {/* Video content */}
           <div className={cn('absolute inset-0 transition-opacity duration-300', transitioning ? 'opacity-0' : 'opacity-100')}>
-            {channel?.videoUrl ? (
-              <video
-                key={channel.videoUrl}
-                ref={(el) => { if (el) setPipVideoRef(el) }}
-                src={channel.videoUrl}
-                autoPlay muted={muted} loop playsInline
-                className="w-full h-full object-cover"
-              />
-            ) : channel?.muxPlaybackId ? (
-              <MuxPlayerWrapper playbackId={channel.muxPlaybackId} muted={muted} isLive={channel.isLive} onVideoReady={setPipVideoRef} />
-            ) : (
-              <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4">
-                <span className="text-7xl">{channel?.icon}</span>
-                <p className="text-white font-bold text-2xl">{channel?.name}</p>
-                <p className="text-zinc-500 text-sm">{channel?.description}</p>
-              </div>
-            )}
+            {(() => {
+              // Resolve current video source
+              const playlistItem = channel?.playlist?.[playlistIndex]
+              const playbackId = playlistItem?.muxPlaybackId ?? channel?.muxPlaybackId
+              const videoSrc = channel?.videoUrl
+
+              if (videoSrc) {
+                return (
+                  <video
+                    key={videoSrc}
+                    ref={(el) => { if (el) setPipVideoRef(el) }}
+                    src={videoSrc}
+                    autoPlay muted={muted} loop playsInline
+                    className="w-full h-full object-cover"
+                  />
+                )
+              }
+
+              if (playbackId) {
+                return (
+                  <MuxPlayerWrapper
+                    key={`${channel?.number}-${playlistIndex}`}
+                    playbackId={playbackId}
+                    muted={muted}
+                    isLive={channel?.isLive}
+                    onVideoReady={setPipVideoRef}
+                    onEnded={playlistItem ? advancePlaylist : undefined}
+                  />
+                )
+              }
+
+              return (
+                <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center gap-4">
+                  <span className="text-7xl">{channel?.icon}</span>
+                  <p className="text-white font-bold text-2xl">{channel?.name}</p>
+                  <p className="text-zinc-500 text-sm">{channel?.description}</p>
+                  <p className="text-zinc-600 text-xs mt-2">No video content available</p>
+                </div>
+              )
+            })()}
           </div>
 
           {/* Channel switch flash */}
@@ -698,14 +750,17 @@ export default function TVBrowser({ channels }: Props) {
 }
 
 // ─── Lazy Mux wrapper ─────────────────────────────────────────────────────────
-function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady }: {
+function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady, onEnded }: {
   playbackId: string
   muted: boolean
   isLive?: boolean
   onVideoReady?: (el: HTMLVideoElement | null) => void
+  onEnded?: () => void
 }) {
   const playerRef = useRef<HTMLElement | null>(null)
-  const [MuxPlayer, setMuxPlayer] = useState<React.ComponentType<Record<string, unknown>> | null>(null)
+  const [MuxPlayer, setMuxPlayer] = useState<React.ComponentType<
+    Record<string, unknown> & { onEnded?: () => void }
+  > | null>(null)
 
   useEffect(() => {
     import('@mux/mux-player-react').then(m => setMuxPlayer(() => m.default))
@@ -742,6 +797,7 @@ function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady }: {
       autoPlay
       loop={!isLive}
       streamType={isLive ? 'live' : 'on-demand'}
+      onEnded={onEnded}
       style={{
         '--controls': 'none',
         '--media-object-fit': 'cover',

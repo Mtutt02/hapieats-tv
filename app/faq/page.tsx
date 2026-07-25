@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
+import Script from 'next/script'
 import AppShell from '@/components/layout/AppShell'
 import { ChevronDown, HelpCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -552,8 +553,26 @@ export default function FAQPage() {
     setOpenKey((prev) => (prev === key ? null : key))
   }
 
+  const faqSchema = useMemo(() => ({
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: FAQ_SECTIONS.flatMap(s => s.items).map(item => ({
+      '@type': 'Question',
+      name: typeof item.q === 'string' ? item.q : item.q?.toString(),
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: typeof item.a === 'string' ? item.a : item.a?.toString().replace(/<[^>]*>/g, '')?.substring(0, 500),
+      },
+    })),
+  }), [])
+
   return (
     <AppShell>
+      <Script
+        id="faq-schema"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
       <main className="max-w-3xl mx-auto px-4 py-12">
         {/* Header */}
         <div className="flex items-center gap-4 mb-10">
@@ -570,20 +589,6 @@ export default function FAQPage() {
             </p>
           </div>
         </div>
-
-        {/* Ask Hapi Helper — opens the AI assistant */}
-        <button
-          type="button"
-          onClick={() => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('open-hapi-helper')) }}
-          className="mb-10 flex w-full items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-left transition-colors hover:bg-primary/10"
-        >
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-lg">🍽️</span>
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold text-foreground">Ask Hapi Helper</span>
-            <span className="block text-xs text-muted-foreground">Chat with our AI assistant for instant answers about how anything works.</span>
-          </span>
-          <span className="ml-auto text-xs font-semibold text-primary">Open chat →</span>
-        </button>
 
         {/* Sections */}
         <div className="space-y-8">

@@ -5,9 +5,6 @@ import { Toaster } from '@/components/ui/toaster'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import GlobalUploadToast from '@/components/upload/GlobalUploadToast'
-import HelpAssistant from '@/components/help/HelpAssistant'
-import CookieConsent from '@/components/CookieConsent'
-import ConsentGate from '@/components/ConsentGate'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,11 +16,11 @@ export const viewport: Viewport = {
   viewportFit: 'cover', // respect iPhone notch safe areas
 }
 
-// Canonical host is www — the apex 308-redirects to it
-const BASE_URL = 'https://www.hapieatstv.com'
+const BASE_URL = 'https://hapieatstv.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
+  icons: { icon: '/favicon.svg', shortcut: '/favicon.svg', apple: '/favicon.svg' },
   title: { default: 'HapiEats TV', template: '%s | HapiEats TV' },
   description: 'Watch and support food creators on HapiEats TV. Free and premium food videos, live streams, cooking classes, and recipes — all in one place.',
   keywords: [
@@ -40,13 +37,13 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
-  // NOTE: no site-wide canonical/og:url — each page resolves its own against
-  // metadataBase, so /tv, /faq, etc. no longer all claim the homepage.
+  alternates: { canonical: BASE_URL },
   openGraph: {
     siteName: 'HapiEats TV',
     title: 'HapiEats TV — Good Food. Real People. Real Stories.',
     description: 'Watch food creators, catch live streams, and take cooking classes. Free and premium content from real food people.',
     type: 'website',
+    url: BASE_URL,
     locale: 'en_US',
     // opengraph-image.tsx auto-generates the OG image
   },
@@ -69,20 +66,56 @@ export const metadata: Metadata = {
   },
 }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': `${BASE_URL}/#organization`,
+      name: 'HapiEats TV',
+      url: BASE_URL,
+      logo: `${BASE_URL}/favicon.svg`,
+      sameAs: [
+        'https://youtube.com/@hapieatstv',
+      ],
+      description: 'Food video platform — watch food creators, catch live streams, and take cooking classes.',
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${BASE_URL}/#website`,
+      url: BASE_URL,
+      name: 'HapiEats TV',
+      description: 'Watch and support food creators on HapiEats TV. Free and premium food videos, live streams, cooking classes, and recipes.',
+      publisher: { '@id': `${BASE_URL}/#organization` },
+      inLanguage: 'en-US',
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: {
+          '@type': 'EntryPoint',
+          urlTemplate: `${BASE_URL}/search?q={search_term_string}`,
+        },
+        'query-input': 'required name=search_term_string',
+      },
+    },
+  ],
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // dark class makes the dark palette the permanent default
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body className={inter.className}>
         {children}
         <GlobalUploadToast />
-        <HelpAssistant />
         <Toaster />
-        <ConsentGate>
-          <Analytics />
-          <SpeedInsights />
-        </ConsentGate>
-        <CookieConsent />
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   )

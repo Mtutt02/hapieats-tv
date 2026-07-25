@@ -24,7 +24,6 @@ export default async function HomePage() {
       .eq('status', 'ready')
       .eq('visibility', 'public')
       .neq('post_type', 'channel')
-      .neq('is_clip', true)
       .order('published_at', { ascending: false })
       .limit(24),
 
@@ -40,39 +39,32 @@ export default async function HomePage() {
   const hasRealContent = (dbVideos?.length ?? 0) > 0
   const followedStationIds = (followedRows ?? []).map((r: { station_id: string }) => r.station_id)
 
-  const organizationSchema = {
+  // Build video gallery schema from real + sample content
+  const allVideos = [...((dbVideos as Video[]) ?? []), ...SAMPLE_VIDEOS].slice(0, 20)
+  const videoGallerySchema = {
     '@context': 'https://schema.org',
-    '@type': 'Organization',
-    name: 'HapiEats TV',
+    '@type': 'VideoGallery',
+    name: "HapiEats TV — Food Videos",
+    description: 'Watch food creators cook, bake, grill, and explore cuisines from around the world.',
     url: 'https://hapieatstv.com',
-    logo: 'https://hapieatstv.com/icon',
-    sameAs: [],
-    description: 'Watch and support food creators on HapiEats TV. Free and premium food videos, live streams, and cooking classes.',
-  }
-
-  const webSiteSchema = {
-    '@context': 'https://schema.org',
-    '@type': 'WebSite',
-    name: 'HapiEats TV',
-    url: 'https://hapieatstv.com',
-    potentialAction: {
-      '@type': 'SearchAction',
-      target: { '@type': 'EntryPoint', urlTemplate: 'https://hapieatstv.com/search?q={search_term_string}' },
-      'query-input': 'required name=search_term_string',
-    },
+    video: allVideos.map(v => ({
+      '@type': 'VideoObject',
+      name: v.title || 'Food Video',
+      description: v.description || `Watch ${v.title || 'a food video'} on HapiEats TV`,
+      thumbnailUrl: v.thumbnail_url || v.thumbnail,
+      uploadDate: v.published_at || v.created_at || new Date().toISOString().split('T')[0],
+      contentUrl: v.video_url ? `https://hapieatstv.com/watch/${v.id}` : undefined,
+      embedUrl: v.embed_url || undefined,
+      duration: v.duration || undefined,
+    })),
   }
 
   return (
     <AppShell>
       <Script
-        id="org-schema"
+        id="video-gallery-schema"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema).replace(/</g, '\\u003c') }}
-      />
-      <Script
-        id="website-schema"
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteSchema).replace(/</g, '\\u003c') }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(videoGallerySchema) }}
       />
       <HomeClient
         dbVideos={(dbVideos as Video[]) ?? []}

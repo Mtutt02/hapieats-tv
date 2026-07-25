@@ -1,35 +1,67 @@
 import type { MetadataRoute } from 'next'
 
 export default function robots(): MetadataRoute.Robots {
-  const base = 'https://www.hapieatstv.com'
   return {
     rules: [
       {
         userAgent: '*',
         allow: '/',
         disallow: [
-          '/admin/',
           '/api/',
+          '/admin/',
           '/studio/',
-          '/settings',
           '/dashboard/',
-          '/creator/',
-          '/(auth)/',
-          '/login',
-          '/register',
-          '/forgot-password',
-          '/reset-password',
+          '/settings',
+          '/auth/',
           '/tokens',
           '/flavor',
         ],
       },
-      // Block AI training crawlers
       {
-        userAgent: ['GPTBot', 'ChatGPT-User', 'CCBot', 'anthropic-ai', 'Claude-Web', 'Omgilibot', 'FacebookBot'],
-        disallow: '/',
+        userAgent: 'GPTBot',
+        allow: '/',
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/studio/',
+          '/dashboard/',
+          '/registry/',
+        ],
+      },
+      {
+        userAgent: 'Google-Extended',
+        allow: '/',
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/studio/',
+          '/dashboard/',
+          '/registry/',
+        ],
+      },
+      {
+        userAgent: 'Claude-Web',
+        allow: '/',
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/studio/',
+          '/dashboard/',
+          '/registry/',
+        ],
+      },
+      {
+        userAgent: 'CCBot',
+        allow: '/',
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/studio/',
+          '/dashboard/',
+          '/registry/',
+        ],
       },
     ],
-    sitemap: `${base}/sitemap.xml`,
-    host: base,
+    sitemap: 'https://hapieatstv.com/sitemap.xml',
   }
 }
