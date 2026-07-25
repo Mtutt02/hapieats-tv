@@ -194,6 +194,7 @@ function PhysicalRemote({
   onToggleFullscreen,
   onTogglePiP,
   onShowOSD,
+  onMinimize,
   muted,
   showGuide,
   isFullscreen,
