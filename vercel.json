@@ -1,7 +1,7 @@
 {
   "installCommand": "npm install",
   "buildCommand": "npx next build",
-  "ignoreBuildCommand": "echo cache-bust-20260725-2145",
+  "ignoreCommand": "exit 1",
   "framework": "nextjs",
   "crons": [
     {
