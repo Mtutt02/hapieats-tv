@@ -23,6 +23,7 @@ export default async function HomePage() {
       `)
       .eq('status', 'ready')
       .eq('visibility', 'public')
+      .neq('is_clip', true)
       .neq('post_type', 'channel')
       .order('published_at', { ascending: false })
       .limit(24),

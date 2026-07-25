@@ -46,28 +46,50 @@ interface VideoRow {
 }
 
 export default async function TVPage() {
-  const supabase = createServiceClient()
+  let supabase;
+  try {
+    supabase = createServiceClient()
+  } catch (e) {
+    console.error('TVPage: Failed to create Supabase client', e);
+    throw e;
+  }
 
   // ── 1. Stations (the 8 community channels), their programming, live now ──
-  const [{ data: stationRows }, { data: videoRows }, { data: liveStreams }] = await Promise.all([
-    supabase
-      .from('stations')
-      .select('id, slug, name, icon, description, theme')
-      .in('slug', STATION_DIAL),
-    supabase
-      .from('videos')
-      .select('title, mux_playback_id, duration, station_id')
-      .eq('status', 'ready')
-      .eq('visibility', 'public')
-      .eq('is_clip', false)
-      .not('mux_playback_id', 'is', null)
-      .order('published_at', { ascending: true }),
-    supabase
-      .from('live_streams')
-      .select('id, title, mux_playback_id, channel:channels(name, slug, id)')
-      .eq('status', 'active')
-      .limit(10),
-  ])
+  let stationRows, videoRows, liveStreamRows;
+  try {
+    const results = await Promise.allSettled([
+      supabase
+        .from('stations')
+        .select('id, slug, name, icon, description, theme')
+        .in('slug', STATION_DIAL),
+      supabase
+        .from('videos')
+        .select('title, mux_playback_id, duration, station_id')
+        .eq('status', 'ready')
+        .eq('visibility', 'public')
+        .eq('is_clip', false)
+        .not('mux_playback_id', 'is', null)
+        .order('published_at', { ascending: true }),
+      supabase
+        .from('live_streams')
+        .select('id, title, mux_playback_id, channel:channels(name, slug, id)')
+        .eq('status', 'active')
+        .limit(10),
+    ]);
+    
+    stationRows = results[0].status === 'fulfilled' ? results[0].value.data : null;
+    videoRows = results[1].status === 'fulfilled' ? results[1].value.data : null;
+    liveStreamRows = results[2].status === 'fulfilled' ? results[2].value.data : null;
+    
+    if (results.some(r => r.status === 'rejected')) {
+      console.error('TVPage: Some DB queries failed', results.filter(r => r.status === 'rejected').map(r => (r as PromiseRejectedResult).reason));
+    }
+  } catch (e) {
+    console.error('TVPage: Query error', e);
+    throw e;
+  }
+
+  const liveStreams = liveStreamRows
 
   const stations = (stationRows ?? []) as StationRow[]
   const videos = (videoRows ?? []) as VideoRow[]
