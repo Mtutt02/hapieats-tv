@@ -72,6 +72,7 @@ const nextConfig = {
   async redirects() {
     return [
       { source: '/learn', destination: '/courses', permanent: true },
+      { source: '/watch-tv', destination: '/tv', permanent: true },
     ]
   },
 }
