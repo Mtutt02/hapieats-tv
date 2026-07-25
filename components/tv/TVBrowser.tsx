@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronUp, ChevronDown, PictureInPicture2 } from 'lucide-react'
+import { X, Volume2, VolumeX, Maximize2, Minimize2, ChevronUp, ChevronDown, PictureInPicture2, SkipForward } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface TVPlaylistItem {
@@ -32,7 +32,6 @@ interface Props {
 function findVideoElement(container: HTMLElement): HTMLVideoElement | null {
   const direct = container.querySelector('video')
   if (direct) return direct as HTMLVideoElement
-  // Try Mux Player shadow DOM
   const muxPlayer = container.querySelector('mux-player')
   if (muxPlayer?.shadowRoot) {
     const v = muxPlayer.shadowRoot.querySelector('video')
@@ -42,17 +41,33 @@ function findVideoElement(container: HTMLElement): HTMLVideoElement | null {
 }
 
 // ─── On-Screen Display ────────────────────────────────────────────────────────
-function OSD({ channel, visible }: { channel: TVChannel; visible: boolean }) {
+function OSD({
+  channel,
+  visible,
+  playlistIndex,
+  onSkip,
+}: {
+  channel: TVChannel
+  visible: boolean
+  playlistIndex: number
+  onSkip?: () => void
+}) {
+  const currentItem = channel.playlist?.[playlistIndex]
+  const hasNext = (channel.playlist?.length ?? 0) > 1
+
   return (
-    <div className={cn(
-      'absolute bottom-0 left-0 right-0 z-20 transition-all duration-500 pointer-events-none',
-      'bg-gradient-to-t from-black/95 via-black/50 to-transparent px-5 sm:px-8 py-5',
-      visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3',
-    )}>
+    <div
+      className={cn(
+        'absolute bottom-0 left-0 right-0 z-20 transition-all duration-500',
+        'bg-gradient-to-t from-black/95 via-black/50 to-transparent px-5 sm:px-8 py-5',
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none',
+      )}
+    >
       <div className="flex items-end justify-between gap-4">
-        <div className="flex items-end gap-4">
-          <div>
-            <div className="flex items-center gap-2.5 mb-1.5">
+        {/* Left: channel info */}
+        <div className="flex items-end gap-4 min-w-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
               <span className="text-primary font-mono font-bold text-sm tracking-widest">
                 CH {String(channel.number).padStart(2, '0')}
               </span>
@@ -62,103 +77,227 @@ function OSD({ channel, visible }: { channel: TVChannel; visible: boolean }) {
                 </span>
               )}
               <span className="text-white/40 text-xs uppercase tracking-wider">{channel.category}</span>
+              {channel.playlist && channel.playlist.length > 1 && (
+                <span className="text-white/30 text-xs font-mono">
+                  {playlistIndex + 1} / {channel.playlist.length}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <span className="text-3xl leading-none">{channel.icon}</span>
-              <div>
+              <div className="min-w-0">
                 <p className="text-white font-bold text-lg leading-tight">{channel.name}</p>
-                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">{channel.currentTitle}</p>
+                <p className="text-white/60 text-sm line-clamp-1 mt-0.5">
+                  {currentItem?.title ?? channel.currentTitle}
+                </p>
               </div>
             </div>
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <p className="font-bold text-white/40 tracking-wider text-sm">HapiEats TV</p>
-          <p className="font-mono text-xs text-white/25 mt-1">
-            {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </p>
+
+        {/* Right: skip + branding */}
+        <div className="flex items-end gap-3 flex-shrink-0">
+          {hasNext && onSkip && (
+            <button
+              onClick={onSkip}
+              className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 hover:border-white/30 rounded-lg px-3 py-1.5 text-white transition-all active:scale-95"
+            >
+              <SkipForward className="h-3.5 w-3.5" />
+              <span className="text-xs font-bold tracking-wide">NEXT</span>
+            </button>
+          )}
+          <div className="text-right">
+            <p className="font-bold text-white/40 tracking-wider text-sm">HapiEats TV</p>
+            <p className="font-mono text-xs text-white/25 mt-1">
+              {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-// ─── Channel Guide (horizontal EPG strip inside TV screen) ────────────────────
+// ─── Channel Guide — two-panel EPG ────────────────────────────────────────────
 function ChannelGuide({
   channels,
   currentNumber,
+  currentPlaylistIndex,
   onSelect,
   onClose,
 }: {
   channels: TVChannel[]
   currentNumber: number
+  currentPlaylistIndex: number
   onSelect: (ch: TVChannel) => void
   onClose: () => void
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [focusedNumber, setFocusedNumber] = useState(currentNumber)
+  const listRef = useRef<HTMLDivElement>(null)
+  const focusedChannel = channels.find(c => c.number === focusedNumber) ?? channels[0]
 
   useEffect(() => {
-    if (!scrollRef.current) return
-    const active = scrollRef.current.querySelector<HTMLElement>('[data-active="true"]')
-    if (active) {
-      setTimeout(() => active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 80)
-    }
+    if (!listRef.current) return
+    const active = listRef.current.querySelector<HTMLElement>('[data-active="true"]')
+    if (active) setTimeout(() => active.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80)
   }, [])
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black via-black/97 to-black/0">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+    <div className="absolute inset-0 z-30 flex flex-col" style={{ background: 'rgba(5,5,5,0.97)' }}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/70 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Channel Guide</span>
-          <span className="text-[10px] text-zinc-600">— {channels.length} channels</span>
+          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.22em]">Channel Guide</span>
+          <span className="text-[10px] text-zinc-600">· {channels.length} channels</span>
         </div>
-        <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors p-1 rounded">
+        <button
+          onClick={onClose}
+          className="text-zinc-500 hover:text-white transition-colors p-1 rounded"
+        >
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* Horizontal scrolling channel strip */}
-      <div
-        ref={scrollRef}
-        className="flex gap-2.5 overflow-x-auto px-4 pb-5 snap-x snap-mandatory"
-        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-      >
-        {channels.map(ch => {
-          const isActive = ch.number === currentNumber
-          return (
-            <button
-              key={ch.number}
-              data-active={isActive ? 'true' : undefined}
-              onClick={() => { onSelect(ch); onClose() }}
-              className={cn(
-                'flex-shrink-0 snap-start w-44 rounded-xl p-3 border text-left',
-                'transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]',
-                isActive
-                  ? 'border-primary bg-primary/20 ring-1 ring-primary/40'
-                  : 'border-zinc-800 bg-zinc-900/90 hover:border-zinc-600 hover:bg-zinc-800/90',
-              )}
-            >
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className={cn('font-mono text-[10px] font-bold', isActive ? 'text-primary' : 'text-zinc-500')}>
-                  CH {String(ch.number).padStart(2, '0')}
-                </span>
-                {ch.isLive && (
-                  <span className="bg-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded text-white animate-pulse">
-                    LIVE
-                  </span>
+      <div className="flex flex-1 min-h-0">
+        {/* ── Left: channel list ── */}
+        <div
+          ref={listRef}
+          className="w-40 sm:w-48 border-r border-zinc-800/60 overflow-y-auto flex-shrink-0"
+          style={{ scrollbarWidth: 'none' }}
+        >
+          {channels.map(ch => {
+            const isActive = ch.number === currentNumber
+            const isFocused = ch.number === focusedNumber
+            return (
+              <button
+                key={ch.number}
+                data-active={isActive ? 'true' : undefined}
+                onClick={() => { onSelect(ch); onClose() }}
+                onMouseEnter={() => setFocusedNumber(ch.number)}
+                onFocus={() => setFocusedNumber(ch.number)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors duration-100 border-l-2',
+                  isFocused
+                    ? 'bg-zinc-800/70 border-l-primary'
+                    : isActive
+                    ? 'bg-zinc-900/50 border-l-primary/40'
+                    : 'border-l-transparent hover:bg-zinc-900/50',
                 )}
-              </div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-2xl leading-none">{ch.icon}</span>
-                <span className={cn('text-sm font-bold truncate leading-tight', isActive ? 'text-primary' : 'text-white')}>
-                  {ch.name}
+              >
+                <span className={cn(
+                  'font-mono text-[9px] w-6 flex-shrink-0 font-bold',
+                  isFocused ? 'text-primary' : isActive ? 'text-primary/60' : 'text-zinc-600',
+                )}>
+                  {String(ch.number).padStart(2, '0')}
                 </span>
+                <span className="text-sm leading-none flex-shrink-0">{ch.icon || '📺'}</span>
+                <div className="min-w-0 flex-1">
+                  <p className={cn(
+                    'text-[11px] font-bold truncate leading-tight',
+                    isFocused ? 'text-white' : isActive ? 'text-primary' : 'text-zinc-300',
+                  )}>
+                    {ch.name}
+                  </p>
+                  {ch.isLive && (
+                    <span className="text-[8px] bg-red-600 text-white px-1 py-px rounded font-bold animate-pulse">
+                      LIVE
+                    </span>
+                  )}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* ── Right: channel detail + playlist ── */}
+        <div
+          className="flex-1 overflow-y-auto p-4 min-h-0"
+          style={{ scrollbarWidth: 'none' }}
+        >
+          {focusedChannel && (
+            <>
+              {/* Channel header */}
+              <div className="flex items-start gap-3 mb-5">
+                <span className="text-5xl leading-none">{focusedChannel.icon || '📺'}</span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <span className="font-mono text-[10px] text-zinc-500 font-bold">
+                      CH {String(focusedChannel.number).padStart(2, '0')}
+                    </span>
+                    <span className="text-[10px] text-zinc-600 uppercase tracking-wider">
+                      {focusedChannel.category}
+                    </span>
+                    {focusedChannel.isLive && (
+                      <span className="bg-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded text-white animate-pulse">
+                        LIVE
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-white font-bold text-base leading-tight">{focusedChannel.name}</h3>
+                  {focusedChannel.description && (
+                    <p className="text-zinc-500 text-xs mt-1 leading-snug">{focusedChannel.description}</p>
+                  )}
+                </div>
               </div>
-              <p className="text-[11px] text-zinc-500 line-clamp-2 leading-snug">{ch.currentTitle}</p>
-            </button>
-          )
-        })}
+
+              {/* Playlist */}
+              {focusedChannel.playlist && focusedChannel.playlist.length > 0 ? (
+                <div>
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.2em]">
+                      {focusedChannel.number === currentNumber ? 'Now Playing' : 'Playlist'}
+                    </span>
+                    <span className="text-[9px] text-zinc-600">
+                      · {focusedChannel.playlist.length} video{focusedChannel.playlist.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {focusedChannel.playlist.map((item, i) => {
+                      const isNowPlaying = focusedChannel.number === currentNumber && i === currentPlaylistIndex
+                      const mins = item.duration != null ? Math.floor(item.duration / 60) : null
+                      const secs = item.duration != null ? String(Math.floor(item.duration % 60)).padStart(2, '0') : null
+                      return (
+                        <div
+                          key={i}
+                          className={cn(
+                            'flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors',
+                            isNowPlaying
+                              ? 'bg-primary/15 border border-primary/25'
+                              : 'bg-zinc-900/50 border border-zinc-800/30',
+                          )}
+                        >
+                          <span className={cn(
+                            'font-mono text-[9px] w-5 text-center flex-shrink-0 font-bold',
+                            isNowPlaying ? 'text-primary' : 'text-zinc-600',
+                          )}>
+                            {isNowPlaying ? '▶' : String(i + 1)}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className={cn(
+                              'text-xs font-medium truncate',
+                              isNowPlaying ? 'text-primary' : 'text-zinc-300',
+                            )}>
+                              {item.title}
+                            </p>
+                          </div>
+                          {mins !== null && (
+                            <span className="text-[10px] text-zinc-600 flex-shrink-0 font-mono">
+                              {mins}:{secs}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-zinc-600 text-xs">
+                  {focusedChannel.isLive ? '🔴 Streaming live' : 'No playlist available'}
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -169,6 +308,7 @@ interface RemoteProps {
   channels: TVChannel[]
   currentIndex: number
   currentChannel: TVChannel | undefined
+  currentPlaylistIndex: number
   onChannelUp: () => void
   onChannelDown: () => void
   onChannelSelect: (n: number) => void
@@ -178,6 +318,7 @@ interface RemoteProps {
   onTogglePiP: () => void
   onShowOSD: () => void
   onMinimize: () => void
+  onSkip: () => void
   muted: boolean
   showGuide: boolean
   isFullscreen: boolean
@@ -186,6 +327,7 @@ interface RemoteProps {
 
 function PhysicalRemote({
   currentChannel,
+  currentPlaylistIndex,
   onChannelUp,
   onChannelDown,
   onChannelSelect,
@@ -195,6 +337,7 @@ function PhysicalRemote({
   onTogglePiP,
   onShowOSD,
   onMinimize,
+  onSkip,
   muted,
   showGuide,
   isFullscreen,
@@ -202,6 +345,7 @@ function PhysicalRemote({
 }: RemoteProps) {
   const [numBuffer, setNumBuffer] = useState('')
   const numTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasPlaylist = (currentChannel?.playlist?.length ?? 0) > 1
 
   const pressNumber = useCallback((n: string) => {
     const next = (numBuffer + n).slice(-2)
@@ -217,24 +361,27 @@ function PhysicalRemote({
   useEffect(() => () => { if (numTimerRef.current) clearTimeout(numTimerRef.current) }, [])
 
   const Btn = ({
-    onClick, children, className = '', active = false, red = false, small = false,
+    onClick, children, className = '', active = false, red = false, small = false, disabled = false,
   }: {
     onClick: () => void; children: React.ReactNode; className?: string
-    active?: boolean; red?: boolean; small?: boolean
+    active?: boolean; red?: boolean; small?: boolean; disabled?: boolean
   }) => (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         'flex items-center justify-center font-bold select-none transition-all duration-75',
         'rounded-lg border active:scale-95',
         'shadow-[0_2px_0_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.05)]',
         'active:shadow-none active:translate-y-[1px]',
         small ? 'text-[10px]' : 'text-xs',
-        red
+        disabled
+          ? 'opacity-30 cursor-not-allowed bg-zinc-900 border-zinc-800 text-zinc-600'
+          : red
           ? 'bg-red-800 hover:bg-red-700 border-red-900 text-red-200'
           : active
-            ? 'bg-primary/20 border-primary/50 text-primary'
-            : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700/80 text-zinc-200',
+          ? 'bg-primary/20 border-primary/50 text-primary'
+          : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700/80 text-zinc-200',
         className,
       )}
     >
@@ -292,6 +439,11 @@ function PhysicalRemote({
             <>
               <div className="font-mono text-[9px] text-green-700/60 tracking-widest">
                 CH {String(currentChannel.number).padStart(2, '0')}
+                {hasPlaylist && (
+                  <span className="ml-1 text-green-800">
+                    · {currentPlaylistIndex + 1}/{currentChannel.playlist!.length}
+                  </span>
+                )}
               </div>
               <div className="font-mono text-sm font-bold text-green-400/90 truncate mt-0.5">
                 {currentChannel.name}
@@ -315,6 +467,17 @@ function PhysicalRemote({
             <PictureInPicture2 className="h-3 w-3" /> PiP
           </Btn>
         </div>
+
+        {/* Skip button — full width */}
+        <Btn
+          onClick={onSkip}
+          disabled={!hasPlaylist}
+          className="w-full h-8 gap-1.5"
+          small
+        >
+          <SkipForward className="h-3 w-3" />
+          SKIP TO NEXT VIDEO
+        </Btn>
 
         {/* D-Pad */}
         <div className="flex items-center justify-center py-1">
@@ -406,7 +569,7 @@ function FloatingRemote(props: RemoteProps & { open: boolean; onToggle: () => vo
       <div
         className={cn(
           'w-full overflow-hidden transition-all duration-300 ease-in-out',
-          open ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0',
+          open ? 'max-h-[650px] opacity-100' : 'max-h-0 opacity-0',
         )}
       >
         <PhysicalRemote {...remoteProps} />
@@ -456,7 +619,6 @@ export default function TVBrowser({ channels }: Props) {
   const [transitioning, setTransitioning] = useState(false)
   const [transitionNum, setTransitionNum] = useState<number | null>(null)
   const [playlistIndex, setPlaylistIndex] = useState(0)
-  const playlistTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -474,18 +636,14 @@ export default function TVBrowser({ channels }: Props) {
   useEffect(() => {
     setPlaylistIndex(0)
     showOSDTemporarily()
-    // Clean up any pending playlist timers
-    playlistTimersRef.current.forEach(t => clearTimeout(t))
-    playlistTimersRef.current = []
     return () => { if (osdTimerRef.current) clearTimeout(osdTimerRef.current) }
   }, [currentIndex]) // eslint-disable-line
 
-  // ── Playlist auto-advance ──
+  // ── Playlist advance (skip or auto-advance) ──
   const advancePlaylist = useCallback(() => {
     const ch = channels[currentIndex]
     if (!ch?.playlist?.length) return
     const nextIdx = (playlistIndex + 1) % ch.playlist.length
-    // Show a brief transition flash
     setTransitionNum(ch.number)
     setTransitioning(true)
     setTimeout(() => {
@@ -493,7 +651,8 @@ export default function TVBrowser({ channels }: Props) {
       setTransitioning(false)
       setTransitionNum(null)
     }, 200)
-  }, [channels, currentIndex, playlistIndex])
+    showOSDTemporarily()
+  }, [channels, currentIndex, playlistIndex, showOSDTemporarily])
 
   // ── Channel switching ──
   const switchChannel = useCallback((newIndex: number) => {
@@ -548,12 +707,10 @@ export default function TVBrowser({ channels }: Props) {
         await document.exitPictureInPicture()
         return
       }
-      // Try explicit ref first
       let video = pipVideoRef.current
       if (!video && containerRef.current) {
         video = findVideoElement(containerRef.current)
       }
-      // If still no video element, try Mux Player's native PiP
       if (!video) {
         const muxPlayer = containerRef.current?.querySelector('mux-player') as HTMLElement & { requestPictureInPicture?: () => Promise<void> }
         if (muxPlayer?.requestPictureInPicture) {
@@ -593,15 +750,17 @@ export default function TVBrowser({ channels }: Props) {
       else if (e.key === 'f' || e.key === 'F') toggleFullscreen()
       else if (e.key === 'p' || e.key === 'P') togglePiP()
       else if (e.key === 'r' || e.key === 'R') setRemoteOpen(v => !v)
+      else if (e.key === 'n' || e.key === 'N') advancePlaylist()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [channelUp, channelDown, toggleFullscreen, togglePiP])
+  }, [channelUp, channelDown, toggleFullscreen, togglePiP, advancePlaylist])
 
   const remoteProps: RemoteProps = {
     channels,
     currentIndex,
     currentChannel: channel,
+    currentPlaylistIndex: playlistIndex,
     onChannelUp: channelUp,
     onChannelDown: channelDown,
     onChannelSelect: selectChannelByNumber,
@@ -611,6 +770,7 @@ export default function TVBrowser({ channels }: Props) {
     onTogglePiP: togglePiP,
     onShowOSD: showOSDTemporarily,
     onMinimize: () => setRemoteOpen(false),
+    onSkip: advancePlaylist,
     muted,
     showGuide,
     isFullscreen,
@@ -622,7 +782,7 @@ export default function TVBrowser({ channels }: Props) {
       'relative bg-zinc-950',
       isFullscreen ? 'h-screen' : 'h-[calc(100svh-56px)]',
     )}>
-      {/* ── TV SCREEN — fills the whole space ── */}
+      {/* ── TV SCREEN ── */}
       <div className="absolute inset-0 p-3 sm:p-4 pb-[46px] flex flex-col">
         {/* Outer bezel */}
         <div
@@ -653,7 +813,6 @@ export default function TVBrowser({ channels }: Props) {
           {/* Video content */}
           <div className={cn('absolute inset-0 transition-opacity duration-300', transitioning ? 'opacity-0' : 'opacity-100')}>
             {(() => {
-              // Resolve current video source
               const playlistItem = channel?.playlist?.[playlistIndex]
               const playbackId = playlistItem?.muxPlaybackId ?? channel?.muxPlaybackId
               const videoSrc = channel?.videoUrl
@@ -704,7 +863,14 @@ export default function TVBrowser({ channels }: Props) {
           )}
 
           {/* OSD */}
-          {channel && <OSD channel={channel} visible={showOSD && !showGuide && !transitioning} />}
+          {channel && (
+            <OSD
+              channel={channel}
+              visible={showOSD && !showGuide && !transitioning}
+              playlistIndex={playlistIndex}
+              onSkip={advancePlaylist}
+            />
+          )}
 
           {/* PiP badge */}
           {isPiP && (
@@ -714,11 +880,12 @@ export default function TVBrowser({ channels }: Props) {
             </div>
           )}
 
-          {/* Channel guide (slides up from bottom of TV) */}
+          {/* Channel guide */}
           {showGuide && channel && (
             <ChannelGuide
               channels={channels}
               currentNumber={channel.number}
+              currentPlaylistIndex={playlistIndex}
               onSelect={selectChannel}
               onClose={() => setShowGuide(false)}
             />
@@ -767,7 +934,6 @@ function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady, onEnded }: 
     import('@mux/mux-player-react').then(m => setMuxPlayer(() => m.default))
   }, [])
 
-  // Watch for the video element in Mux Player's shadow DOM
   useEffect(() => {
     if (!playerRef.current || !onVideoReady) return
     const el = playerRef.current
@@ -779,7 +945,6 @@ function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady, onEnded }: 
       }
       return false
     }
-    // Poll for up to 5s until the video element appears in shadow DOM
     if (!check()) {
       const interval = setInterval(() => {
         if (check()) clearInterval(interval)
