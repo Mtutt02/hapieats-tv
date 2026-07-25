@@ -124,12 +124,14 @@ function ChannelGuide({
   currentNumber,
   currentPlaylistIndex,
   onSelect,
+  onSelectVideo,
   onClose,
 }: {
   channels: TVChannel[]
   currentNumber: number
   currentPlaylistIndex: number
   onSelect: (ch: TVChannel) => void
+  onSelectVideo: (ch: TVChannel, videoIndex: number) => void
   onClose: () => void
 }) {
   const [focusedNumber, setFocusedNumber] = useState(currentNumber)
@@ -257,13 +259,15 @@ function ChannelGuide({
                       const mins = item.duration != null ? Math.floor(item.duration / 60) : null
                       const secs = item.duration != null ? String(Math.floor(item.duration % 60)).padStart(2, '0') : null
                       return (
-                        <div
+                        <button
                           key={i}
+                          onClick={() => { onSelectVideo(focusedChannel, i); onClose() }}
                           className={cn(
-                            'flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors',
+                            'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-left',
+                            'active:scale-[0.98]',
                             isNowPlaying
                               ? 'bg-primary/15 border border-primary/25'
-                              : 'bg-zinc-900/50 border border-zinc-800/30',
+                              : 'bg-zinc-900/50 border border-zinc-800/30 hover:bg-zinc-800/60 hover:border-zinc-700/50',
                           )}
                         >
                           <span className={cn(
@@ -285,7 +289,7 @@ function ChannelGuide({
                               {mins}:{secs}
                             </span>
                           )}
-                        </div>
+                        </button>
                       )
                     })}
                   </div>
@@ -679,6 +683,33 @@ export default function TVBrowser({ channels }: Props) {
     if (idx !== -1) switchChannel(idx)
   }, [channels, switchChannel])
 
+  const selectChannelAndVideo = useCallback((ch: TVChannel, videoIndex: number) => {
+    const idx = channels.findIndex(c => c.number === ch.number)
+    if (idx === -1) return
+    if (idx === currentIndex) {
+      // Same channel — just jump to the video with a brief flash
+      setTransitioning(true)
+      setTransitionNum(ch.number)
+      setTimeout(() => {
+        setPlaylistIndex(videoIndex)
+        setTransitioning(false)
+        setTransitionNum(null)
+        showOSDTemporarily()
+      }, 200)
+    } else {
+      // Different channel — switch channel then set video index
+      setTransitioning(true)
+      setTransitionNum(ch.number)
+      setTimeout(() => {
+        setCurrentIndex(idx)
+        setPlaylistIndex(videoIndex)
+        setTransitioning(false)
+        setTransitionNum(null)
+        showOSDTemporarily()
+      }, 300)
+    }
+  }, [channels, currentIndex, showOSDTemporarily])
+
   // ── Fullscreen ──
   const toggleFullscreen = useCallback(async () => {
     if (!document.fullscreenElement) {
@@ -887,6 +918,7 @@ export default function TVBrowser({ channels }: Props) {
               currentNumber={channel.number}
               currentPlaylistIndex={playlistIndex}
               onSelect={selectChannel}
+              onSelectVideo={selectChannelAndVideo}
               onClose={() => setShowGuide(false)}
             />
           )}
