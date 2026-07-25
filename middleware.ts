@@ -13,6 +13,6 @@ export const config = {
      * - Public files (images, etc.)
      * - API routes that need raw body (Mux/Stripe webhooks)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|tv|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

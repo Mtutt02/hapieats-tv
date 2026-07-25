@@ -4,6 +4,8 @@ import TVBrowser, { TVChannel, TVPlaylistItem } from '@/components/tv/TVBrowser'
 
 export const dynamic = 'force-dynamic'
 
+// Cache-bust: cfg 2026-07-25 20:45
+
 export const metadata: Metadata = {
   title: 'HapiEats TV',
   description: 'Flip through food channels — live streams, on-demand recipes, and more.',
