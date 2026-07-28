@@ -1,0 +1,12 @@
+{
+  "installCommand": "npm install",
+  "buildCommand": "npx next build",
+  "ignoreCommand": "exit 1",
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/admin/ai-moderate",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}

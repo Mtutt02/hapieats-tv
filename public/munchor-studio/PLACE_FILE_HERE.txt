@@ -1,0 +1,19 @@
+Place munchor_studio_editor.html in this directory.
+
+The file will be served at: /munchor-studio/munchor_studio_editor.html
+and loaded inside an iframe in the Upload Studio "TV Studio" tab.
+
+The editor communicates with HapiEats TV via postMessage using these events:
+
+FROM editor → parent:
+  { type: 'HAPIEATS_EDITOR_READY' }                    — editor loaded and ready
+  { type: 'HAPIEATS_EXPORT_STARTED', duration }        — render began
+  { type: 'HAPIEATS_REQUEST_UPLOAD_URL' }              — request a signed Mux upload URL
+  { type: 'HAPIEATS_VIDEO_EXPORTED', mime, ext, bytes, blobUrl, dataUrl? } — export complete
+  { type: 'HAPIEATS_MUX_UPLOADED', bytes, ext }        — upload to Mux finished
+  { type: 'HAPIEATS_MUX_UPLOAD_FAILED', reason }       — upload failed
+
+FROM parent → editor:
+  { type: 'HAPIEATS_MUX_UPLOAD_URL', url }             — send back the signed upload URL
+  { type: 'HAPIEATS_LOAD_VIDEO', url, name }           — (optional) preload a video
+  { type: 'HAPIEATS_REQUEST_EXPORT' }                  — (optional) trigger export programmatically

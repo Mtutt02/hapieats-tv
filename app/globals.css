@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark-first — cool dark palette with neon cyan accent */
+  :root {
+    --background: 220 20% 6%;         /* #0b0d11 — cool dark blue-black */
+    --foreground: 210 20% 94%;        /* #edf1f5 — cool white text */
+    --card: 220 15% 11%;              /* #191d26 — dark card surface */
+    --card-foreground: 210 20% 94%;
+    --popover: 220 15% 13%;
+    --popover-foreground: 210 20% 94%;
+    --primary: 188 85% 53%;           /* #22d3ee — neon cyan */
+    --primary-foreground: 220 20% 6%;
+    --secondary: 220 12% 16%;         /* #232933 — subtle raised surface */
+    --secondary-foreground: 210 20% 85%;
+    --muted: 220 12% 14%;             /* #1e232d */
+    --muted-foreground: 210 12% 56%;  /* #838e9c — cool grey */
+    --accent: 220 12% 18%;            /* #272e3b */
+    --accent-foreground: 210 20% 90%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 12% 22%;            /* #303848 */
+    --input: 220 12% 18%;
+    --ring: 188 85% 53%;
+    --radius: 0.5rem;
+
+    /* Sidebar width token */
+    --sidebar-w: 240px;
+  }
+
+  /* Light override (opt-in only via .light class) */
+  .light {
+    --background: 210 40% 98%;
+    --foreground: 220 30% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 30% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 30% 10%;
+    --primary: 188 85% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 25% 95%;
+    --secondary-foreground: 220 30% 20%;
+    --muted: 210 20% 93%;
+    --muted-foreground: 210 15% 50%;
+    --accent: 210 25% 92%;
+    --accent-foreground: 220 30% 15%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 20% 88%;
+    --input: 210 20% 88%;
+    --ring: 188 85% 40%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  /* Prevent horizontal overflow on all screen sizes — fixes mobile auto-zoom */
+  html { overflow-x: hidden; max-width: 100%; }
+  body { @apply bg-background text-foreground; overflow-x: hidden; max-width: 100%; }
+  /* Ensure no child element escapes the viewport width */
+  #__next, [data-nextjs-scroll-focus-boundary] { max-width: 100%; overflow-x: hidden; }
+
+  /* Smooth scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Category pill active */
+  .pill-active {
+    @apply bg-foreground text-background;
+  }
+
+  /* iOS tap highlight removal */
+  .touch-manipulation { touch-action: manipulation; }
+
+  /* Safe area insets for iOS home bar */
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+}
+
+/* Remove iOS tap highlight on interactive elements */
+a, button { -webkit-tap-highlight-color: transparent; }
+
+/* Prevent font size inflation on iOS rotate */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* Smooth momentum scrolling on iOS */
+.overflow-x-auto, .overflow-y-auto, .overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mux player branding */
+mux-player {
+  --media-primary-color: hsl(188, 85%, 53%);
+}
+
+/* Station card gradient overlay */
+.station-gradient {
+  background: linear-gradient(to top, hsl(var(--background)) 0%, transparent 60%);
+}
+
+/* Neon cyan card hover glow — brand signature */
+.card-glow:hover {
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.18), 0 0 40px rgba(34, 211, 238, 0.06);
+}
+
+/* Section divider with fade */
+.section-divider {
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, hsl(var(--border)), transparent);
+  margin: 0;
+}
+
+/* Gradient text — brand name effect */
+.brand-gradient {
+  background: linear-gradient(135deg, #06b6d4 0%, #22d3ee 50%, #f0147e 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Station bubble ring animation */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--accent)) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

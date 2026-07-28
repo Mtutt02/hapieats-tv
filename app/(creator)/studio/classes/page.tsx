@@ -1,0 +1,6 @@
+import { redirect } from 'next/navigation'
+
+// Consolidated: one builder — Academy Studio.
+export default function StudioClassesRedirect() {
+  redirect('/academy')
+}

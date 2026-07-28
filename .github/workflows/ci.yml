@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Vercel is the authoritative build gate for production (it has the real env
+# vars). CI here runs a typecheck for visibility only — a full `next build`
+# can't run in CI without the project's Supabase/Stripe/Mux secrets, so we
+# don't attempt it. This job never blocks; it surfaces type issues in logs.
+jobs:
+  typecheck:
+    name: Typecheck (visibility)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: TypeScript
+        run: npm run typecheck
+        continue-on-error: true
