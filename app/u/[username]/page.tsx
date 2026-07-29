@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
 import ProfileHero, { type ProfileData } from '@/components/profile/ProfileHero'
 import ProfileStats from '@/components/profile/ProfileStats'
@@ -16,8 +16,8 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { username } = await params
-  const supabase = createClient()
-  const { data: profile } = await supabase
+  const svc = createServiceClient()
+  const { data: profile } = await svc
     .from('profiles')
     .select('display_name, bio, avatar_url')
     .eq('username', username)
@@ -47,10 +47,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ProfileV3Page({ params }: Props) {
   const { username } = await params
   const supabase = createClient()
+  const svc = createServiceClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  // ── Profile ──────────────────────────────────────────────────────
-  const { data: profile } = await supabase
+  // ── Profile (service client — bypass RLS for logged-out visitors) ─
+  const { data: profile } = await svc
     .from('profiles')
     .select(`
       id, username, display_name, avatar_url, cover_url, bio,
@@ -66,8 +67,8 @@ export default async function ProfileV3Page({ params }: Props) {
   const isOwnProfile = user?.id === profile.id
   const isSignedIn = !!user
 
-  // ── Videos ───────────────────────────────────────────────────────
-  const { data: videos } = await supabase
+  // ── Videos (service client — public content visible to all) ──────
+  const { data: videos } = await svc
     .from('videos')
     .select(`*, channel:channels(id, name, slug, thumbnail_url), creator:profiles(id, username, display_name, avatar_url)`)
     .eq('creator_id', profile.id)
@@ -82,7 +83,7 @@ export default async function ProfileV3Page({ params }: Props) {
   // ── Clips ────────────────────────────────────────────────────────
   let clips: ProfileClip[] = []
   try {
-    const { data, error } = await supabase
+    const { data, error } = await svc
       .from('videos')
       .select('id, title, mux_playback_id, view_count')
       .eq('creator_id', profile.id)
@@ -95,17 +96,17 @@ export default async function ProfileV3Page({ params }: Props) {
   } catch { /* is_clip column may not exist */ }
 
   // ── Channels + Station ───────────────────────────────────────────
-  const { data: channels } = await supabase
+  const { data: channels } = await svc
     .from('channels')
     .select('id, name, slug, thumbnail_url, subscriber_count, description, station_id')
     .eq('creator_id', profile.id)
     .limit(6)
 
   const { data: stationData } = channels?.[0]?.station_id
-    ? await supabase.from('stations').select('id, name').eq('id', (channels[0] as any).station_id).single()
+    ? await svc.from('stations').select('id, name').eq('id', (channels[0] as any).station_id).single()
     : { data: null }
 
-  // ── Follow state ─────────────────────────────────────────────────
+  // ── Follow state (user-scoped client — respects auth) ────────────
   let initialFollowing = false
   if (user && !isOwnProfile) {
     try {
@@ -122,7 +123,7 @@ export default async function ProfileV3Page({ params }: Props) {
   // ── Goals ────────────────────────────────────────────────────────
   let goals: any[] = []
   try {
-    const { data: goalData } = await supabase
+    const { data: goalData } = await svc
       .from('creator_goals')
       .select('*')
       .eq('creator_id', profile.id)
@@ -133,7 +134,7 @@ export default async function ProfileV3Page({ params }: Props) {
   // ── Live check ───────────────────────────────────────────────────
   let isLive = false
   try {
-    const { data: live } = await supabase
+    const { data: live } = await svc
       .from('live_streams')
       .select('id')
       .eq('creator_id', profile.id)
