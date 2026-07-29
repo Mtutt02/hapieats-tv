@@ -1,18 +1,19 @@
-import { type NextRequest } from 'next/server'
-import { updateSession } from '@/lib/supabase/middleware'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request)
+export function middleware(request: NextRequest) {
+  const url = request.nextUrl
+
+  // Redirect /profile/[username] to /u/[username]
+  if (url.pathname.startsWith('/profile/')) {
+    const username = url.pathname.replace('/profile/', '')
+    if (username) {
+      return NextResponse.redirect(new URL(`/u/${username}`, request.url))
+    }
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static, _next/image, favicon.ico
-     * - Public files (images, etc.)
-     * - API routes that need raw body (Mux/Stripe webhooks)
-     */
-    '/((?!_next/static|_next/image|favicon.ico|tv|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+  matcher: '/profile/:path*',
 }

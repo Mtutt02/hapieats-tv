@@ -107,7 +107,7 @@ export default function Navbar() {
                   <DropdownMenuSeparator />
                   {username && (
                     <DropdownMenuItem asChild>
-                      <Link href={`/profile/${username}`} className="flex items-center gap-2 cursor-pointer">
+                      <Link href={`/u/${username}`} className="flex items-center gap-2 cursor-pointer">
                         <UserCircle className="h-4 w-4" /> Your Profile
                       </Link>
                     </DropdownMenuItem>

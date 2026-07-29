@@ -259,7 +259,7 @@ export default function CourseDetail({
           {creator && (
             <div>
               <h2 className="font-bold text-lg mb-3">Instructor</h2>
-              <Link href={`/profile/${creator.username}`} className="flex items-start gap-3 group">
+              <Link href={`/u/${creator.username}`} className="flex items-start gap-3 group">
                 <Avatar className="h-14 w-14 flex-shrink-0">
                   <AvatarImage src={creator.avatar_url ?? undefined} />
                   <AvatarFallback className="bg-primary/20 text-primary font-bold text-lg">
