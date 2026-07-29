@@ -41,6 +41,27 @@ export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPla
     setLoading(false)
   }
 
+  // ─── YouTube video embed ────────────────────────────────────
+  if (video.youtube_url) {
+    // Extract video ID from youtube_url to build embed
+    const youtubeId = video.youtube_url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/)?.[1]
+    const embedUrl = youtubeId ? `https://www.youtube.com/embed/${youtubeId}?autoplay=1&rel=0` : null
+
+    if (embedUrl) {
+      return (
+        <div className="rounded-2xl overflow-hidden bg-black aspect-video">
+          <iframe
+            src={embedUrl}
+            title={video.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="w-full h-full"
+          />
+        </div>
+      )
+    }
+  }
+
   if (hasAccess && video.mux_playback_id) {
     return (
       <div className="rounded-2xl overflow-hidden bg-black aspect-video">

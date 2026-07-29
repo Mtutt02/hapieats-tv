@@ -10,8 +10,9 @@ export const metadata: Metadata = {
 }
 import DashboardStats from '@/components/creator/DashboardStats'
 import VideoCard from '@/components/video/VideoCard'
+import YouTubeUrlInput from '@/components/creator/YouTubeUrlInput'
 import type { Video, CreatorStats } from '@/types'
-import { Radio, Clock, ChevronRight } from 'lucide-react'
+import { Radio, Clock, ChevronRight, Youtube } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 function LiveStreamBadge({ status }: { status: string }) {
@@ -109,6 +110,11 @@ export default async function DashboardPage() {
               + Upload Video
             </Link>
           </div>
+        </div>
+
+        {/* ── Add YouTube Video ──────────────────────────────── */}
+        <div className="mt-6">
+          <YouTubeUrlInput />
         </div>
 
         <DashboardStats stats={stats} />

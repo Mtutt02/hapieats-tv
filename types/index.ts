@@ -58,6 +58,7 @@ export interface Video {
   station_id: string | null
   clip_start: number | null
   clip_end: number | null
+  youtube_url: string | null
   view_count: number
   like_count?: number
   comment_count?: number
