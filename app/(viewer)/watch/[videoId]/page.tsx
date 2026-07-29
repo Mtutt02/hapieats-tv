@@ -325,7 +325,7 @@ export default async function WatchPage({ params }: PageProps) {
     author: {
       '@type': 'Person',
       name: vid.creator?.display_name ?? vid.creator?.username ?? 'HapiEats Creator',
-      url: vid.creator?.username ? `https://hapieatstv.com/profile/${vid.creator.username}` : 'https://hapieatstv.com',
+      url: vid.creator?.username ? `https://hapieatstv.com/u/${vid.creator.username}` : 'https://hapieatstv.com',
     },
     publisher: {
       '@type': 'Organization',

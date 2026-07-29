@@ -1,7 +1,17 @@
-import { type NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
+  const url = request.nextUrl
+
+  // Redirect /profile/[username] to /u/[username]
+  if (url.pathname.startsWith('/profile/')) {
+    const username = url.pathname.replace('/profile/', '')
+    if (username) {
+      return NextResponse.redirect(new URL(`/u/${username}`, request.url))
+    }
+  }
+
   return await updateSession(request)
 }
 

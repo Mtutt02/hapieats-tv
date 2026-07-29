@@ -192,7 +192,7 @@ export default function TopBar({ onMenuOpen }: { onMenuOpen?: () => void }) {
                   <div className="px-3 py-2 text-sm font-medium truncate">{displayName}</div>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem asChild>
-                    <Link href={`/profile/${username}`} className="flex items-center gap-2 cursor-pointer">
+                    <Link href={`/u/${username}`} className="flex items-center gap-2 cursor-pointer">
                       <UserCircle className="h-4 w-4" /> Your Profile
                     </Link>
                   </DropdownMenuItem>
