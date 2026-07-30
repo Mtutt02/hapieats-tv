@@ -51,7 +51,8 @@ export default async function ProfileV3Page({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
 
   // ── Profile (service client — bypass RLS for logged-out visitors) ─
-  const { data: profile } = await svc
+  // Try direct username match first, then fall back to channel slug lookup
+  let { data: profile } = await svc
     .from('profiles')
     .select(`
       id, username, display_name, avatar_url, cover_url, bio,
@@ -61,6 +62,29 @@ export default async function ProfileV3Page({ params }: Props) {
     `)
     .eq('username', username)
     .single()
+
+  // Fallback: look up channel by slug if no profile match
+  if (!profile) {
+    const { data: channel } = await svc
+      .from('channels')
+      .select('creator_id')
+      .eq('slug', username.toLowerCase())
+      .maybeSingle()
+
+    if (channel?.creator_id) {
+      const { data: fallback } = await svc
+        .from('profiles')
+        .select(`
+          id, username, display_name, avatar_url, cover_url, bio,
+          is_creator, is_verified_chef, role, created_at,
+          follower_count, location, website, flavor_profile,
+          video_count, clip_count, streak_count
+        `)
+        .eq('id', channel.creator_id)
+        .single()
+      profile = fallback
+    }
+  }
 
   if (!profile) notFound()
 
