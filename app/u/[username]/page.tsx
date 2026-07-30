@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
-import ProfileHero, { type ProfileData } from '@/components/profile/ProfileHero'
+import ProfileHero, { type ProfileData, type FlavorProfileData } from '@/components/profile/ProfileHero'
 import ProfileStats from '@/components/profile/ProfileStats'
 import ProfileTabs from '@/components/profile/ProfileTabs'
 import { type ProfileClip } from '@/components/profile/ClipsGrid'
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     .from('profiles')
     .select('display_name, bio, avatar_url')
     .eq('username', username)
-    .single()
+    .maybeSingle()
 
   const name = profile?.display_name ?? `@${username}`
   const description = profile?.bio?.slice(0, 160) ?? `Watch food videos from @${username} on HapiEats TV.`
@@ -51,37 +51,27 @@ export default async function ProfileV3Page({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
 
   // ── Profile (service client — bypass RLS for logged-out visitors) ─
-  // Try direct username match first, then fall back to channel slug lookup
+  // Use maybeSingle() to avoid PGRST116 error when profile doesn't exist yet
   let { data: profile } = await svc
     .from('profiles')
-    .select(`
-      id, username, display_name, avatar_url, cover_url, bio,
-      is_creator, is_verified_chef, role, created_at,
-      follower_count, location, website, flavor_profile,
-      video_count, clip_count, streak_count
-    `)
+    .select('*')
     .eq('username', username)
-    .single()
+    .maybeSingle()
 
-  // Fallback: look up channel by slug if no profile match
+  // Fallback: look up channel by slug if no profile match by username
   if (!profile) {
     const { data: channel } = await svc
       .from('channels')
-      .select('creator_id')
+      .select('creator_id, name, slug, thumbnail_url, description')
       .eq('slug', username.toLowerCase())
       .maybeSingle()
 
     if (channel?.creator_id) {
       const { data: fallback } = await svc
         .from('profiles')
-        .select(`
-          id, username, display_name, avatar_url, cover_url, bio,
-          is_creator, is_verified_chef, role, created_at,
-          follower_count, location, website, flavor_profile,
-          video_count, clip_count, streak_count
-        `)
+        .select('*')
         .eq('id', channel.creator_id)
-        .single()
+        .maybeSingle()
       profile = fallback
     }
   }
@@ -127,7 +117,7 @@ export default async function ProfileV3Page({ params }: Props) {
     .limit(6)
 
   const { data: stationData } = channels?.[0]?.station_id
-    ? await svc.from('stations').select('id, name').eq('id', (channels[0] as any).station_id).single()
+    ? await svc.from('stations').select('id, name').eq('id', (channels[0] as any).station_id).maybeSingle()
     : { data: null }
 
   // ── Follow state (user-scoped client — respects auth) ────────────
@@ -191,7 +181,7 @@ export default async function ProfileV3Page({ params }: Props) {
     videoCount: longFormVideos.length,
     clipCount: clips.length,
     channelCount: (channels ?? []).length,
-    flavorProfile: profile.flavor_profile ?? null,
+    flavorProfile: profile.flavor_profile as FlavorProfileData | null ?? null,
     streakCount: profile.streak_count ?? 0,
     isLive,
   }
