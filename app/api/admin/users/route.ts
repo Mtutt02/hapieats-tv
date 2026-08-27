@@ -81,6 +81,11 @@ export async function POST(req: NextRequest) {
       if (!['admin', 'superadmin'].includes(admin.profile.role ?? '')) {
         return NextResponse.json({ error: 'Only admins can reset passwords' }, { status: 403 })
       }
+      // An admin must not be able to seize a peer admin's account; only a
+      // superadmin can reset an admin's password.
+      if (target?.role === 'admin' && admin.profile.role !== 'superadmin') {
+        return NextResponse.json({ error: "Only superadmin can reset an admin's password" }, { status: 403 })
+      }
       const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
       if (newPassword.length < 8) {
         return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })

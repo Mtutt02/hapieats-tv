@@ -23,8 +23,12 @@ export async function GET(request: NextRequest) {
   const tokenHash  = searchParams.get('token_hash')
   const type       = searchParams.get('type') as EmailOtpType | null
   const authError  = searchParams.get('error_description') ?? searchParams.get('error')
-  const next       = searchParams.get('next') ?? '/dashboard'
-  const redirect   = searchParams.get('redirect') ?? next   // legacy compat
+  const rawNext    = searchParams.get('redirect') ?? searchParams.get('next') ?? '/dashboard'
+  // Only allow same-origin relative paths (single leading slash). Anything else
+  // — an absolute URL, protocol-relative //host, or a bare host that would
+  // concatenate onto origin as hapieatstv.com.evil.com — is an open-redirect
+  // vector, so fall back to /dashboard.
+  const redirect   = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard'
 
   // Supabase can bounce back here with an error (e.g. expired/used link).
   if (authError) {

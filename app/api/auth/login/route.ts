@@ -24,13 +24,17 @@ export async function POST(req: NextRequest) {
   // Not an email -> treat as a username and resolve to the account email.
   if (!email.includes('@')) {
     const service = createServiceClient()
+    // Usernames are stored lowercased at registration, so match with an exact
+    // lowercased eq rather than ilike — ilike would treat `_` and `%` (a `_` is
+    // a legal username character) as wildcards and match the wrong/multiple rows.
     const { data: profile } = await service
       .from('profiles')
       .select('email')
-      .ilike('username', email)
-      .single()
+      .eq('username', email.toLowerCase())
+      .maybeSingle()
     // If the username doesn't exist, fall through with an empty email so the
-    // sign-in fails identically to a wrong password — no enumeration signal.
+    // sign-in fails like a wrong password. (Note: response timing still differs
+    // between a resolved username and an unknown one — see PR notes.)
     email = profile?.email ?? ''
   }
 
