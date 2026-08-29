@@ -68,13 +68,17 @@ export async function POST(req: NextRequest) {
   }
 
   // Post a system message to chat so viewers see the stream ended
-  await service.from('live_chat_messages').insert({
-    stream_id,
-    sender_id: user.id,   // creator is the sender for the system message
-    message:   'The stream has ended. Thanks for watching! 👋',
-    type:      'system',
-    is_private: false,
-  }).catch(() => { /* non-fatal */ })
+  try {
+    await service.from('live_chat_messages').insert({
+      stream_id,
+      sender_id: user.id,   // creator is the sender for the system message
+      message:   'The stream has ended. Thanks for watching! 👋',
+      type:      'system',
+      is_private: false,
+    })
+  } catch (e) {
+    console.error('[live/end] system chat message failed (non-fatal):', e)
+  }
 
   return NextResponse.json({ success: true })
 }

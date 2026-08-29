@@ -55,10 +55,6 @@ export const metadata: Metadata = {
     description: 'Watch food creators, catch live streams, and take cooking classes.',
     // twitter-image.tsx auto-generates the Twitter image
   },
-  icons: {
-    // icon.tsx and apple-icon.tsx handle these automatically
-    shortcut: '/favicon.ico',
-  },
   manifest: '/manifest.json',
   verification: {
     // Add Google Search Console & Bing verification tokens here when ready
