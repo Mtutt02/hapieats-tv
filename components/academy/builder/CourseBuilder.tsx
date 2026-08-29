@@ -36,7 +36,8 @@ export default function CourseBuilder({ courseId }: { courseId: string }) {
         if (!active) return
         const c: Course = data.course ?? data
         setCourse(c)
-        const secs: CourseSection[] = (data.sections ?? c.sections ?? []).map((s: CourseSection) => ({
+        const withSections = c as Course & { sections?: CourseSection[] }
+        const secs: CourseSection[] = (data.sections ?? withSections.sections ?? []).map((s: CourseSection) => ({
           ...s,
           lessons: s.lessons ?? [],
         }))

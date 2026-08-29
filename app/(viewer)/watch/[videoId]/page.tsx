@@ -106,7 +106,7 @@ export default async function WatchPage({ params }: PageProps) {
           <div className="lg:col-span-2">
             <div className="relative aspect-video rounded-xl overflow-hidden bg-black">
               <MuxPlayer
-                playbackId={sample.muxPlaybackId}
+                playbackId={sample.muxPlaybackId ?? undefined}
                 streamType="on-demand"
                 style={{ width: '100%', height: '100%' } as React.CSSProperties}
               />

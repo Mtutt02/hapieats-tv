@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { one } from '@/lib/supabase/relation'
 
 // Auth helper — verify the user owns the section's course
 async function verifySectionOwner(supabase: ReturnType<typeof createClient>, userId: string, sectionId: string) {
@@ -10,8 +11,8 @@ async function verifySectionOwner(supabase: ReturnType<typeof createClient>, use
     .single()
 
   if (!data) return false
-  const course = data.course as { creator_id: string } | null
-  return course?.creator_id === userId
+  const course = one(data.course as unknown as { creator_id: string } | { creator_id: string }[])
+  return !!course && course.creator_id === userId
 }
 
 export async function PATCH(

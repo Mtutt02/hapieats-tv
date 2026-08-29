@@ -119,13 +119,17 @@ export default function VideoPreview({
     // Clear canvas
     ctx.clearRect(0, 0, w, h)
 
-    // Draw video frame
-    if (video.readyState >= 2) {
-      const vw = video.videoWidth
-      const vh = video.videoHeight
-      const scale = Math.min(w / vw, h / vh)
-      const dx = (w - vw * scale) / 2
-      const dy = (h - vh * scale) / 2
+    // Draw video frame.
+    // NOTE: these must stay in the enclosing scope — the filter pass below
+    // redraws with the same geometry.
+    const vw = video.videoWidth
+    const vh = video.videoHeight
+    const scale = vw > 0 && vh > 0 ? Math.min(w / vw, h / vh) : 0
+    const dx = (w - vw * scale) / 2
+    const dy = (h - vh * scale) / 2
+    const frameReady = video.readyState >= 2 && scale > 0
+
+    if (frameReady) {
       ctx.drawImage(video, dx, dy, vw * scale, vh * scale)
     }
 
@@ -133,7 +137,7 @@ export default function VideoPreview({
     // We apply the filter via the canvas context filter
     if (filters.preset || filters.brightness !== 0 || filters.contrast !== 0 || filters.saturation !== 0 || filters.warmth !== 0 || filters.blur > 0) {
       const cssFilter = getFilterStyle(filters).filter as string
-      if (cssFilter) {
+      if (cssFilter && frameReady) {
         // We need to get the image data, apply filter, and put it back
         // For performance, use context.filter
         ctx.filter = cssFilter

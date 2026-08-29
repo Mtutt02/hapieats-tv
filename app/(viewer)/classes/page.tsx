@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { one } from '@/lib/supabase/relation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
 import Link from 'next/link'
@@ -137,7 +138,7 @@ export default async function ClassesPage({ searchParams }: PageProps) {
       enrolled = enrollments
         .filter(e => e.course)
         .map(e => {
-          const cls = e.course as EnrolledEntry['course']
+          const cls = one(e.course as unknown as EnrolledEntry['course'] | EnrolledEntry['course'][]) as EnrolledEntry['course']
           const courseLessons = (lessonsByCourse.get(e.course_id) ?? []).sort((a, b) => a.position - b.position)
           const completedLessons = courseLessons.filter(l => progressMap.get(l.id)?.completed).length
 
@@ -315,7 +316,8 @@ export default async function ClassesPage({ searchParams }: PageProps) {
         {browseClasses.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {browseClasses.map((cls) => {
-              const creator = cls.creator as { username: string; display_name: string | null; avatar_url: string | null } | null
+              type CreatorRel = { username: string; display_name: string | null; avatar_url: string | null }
+              const creator = one(cls.creator as unknown as CreatorRel | CreatorRel[])
               return (
                 <Link
                   key={cls.id}

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { one } from '@/lib/supabase/relation'
 import { formatDistanceToNow } from 'date-fns'
 import { ChefHat, ExternalLink, Users } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
@@ -85,7 +86,10 @@ export default async function AdminChefVerificationPage() {
     console.error('admin chef_verification page error:', error)
   }
 
-  const rows = (applications ?? []) as ApplicationRow[]
+  const rows: ApplicationRow[] = (applications ?? []).map((a) => ({
+    ...(a as Omit<ApplicationRow, 'profiles'>),
+    profiles: one((a as { profiles: ApplicationRow['profiles'] | ApplicationRow['profiles'][] }).profiles),
+  }))
 
   return (
     <div className="min-h-screen bg-background">

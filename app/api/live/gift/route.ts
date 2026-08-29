@@ -180,22 +180,30 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Update creator streak ──────────────────────────────────────────────────
-  await service.rpc('update_creator_streak', {
-    p_creator_id:    stream.creator_id,
-    p_activity_type: 'gift_received',
-  }).catch(() => { /* non-fatal */ })
+  try {
+    await service.rpc('update_creator_streak', {
+      p_creator_id:    stream.creator_id,
+      p_activity_type: 'gift_received',
+    })
+  } catch (e) {
+    console.error('[live/gift] streak update failed (non-fatal):', e)
+  }
 
   // ── Post gift_event to live chat (Realtime picks it up for all viewers) ────
-  await service.from('live_chat_messages').insert({
-    stream_id,
-    sender_id:   user.id,
-    message:     `sent ${quantity > 1 ? `${quantity}x ` : ''}${gift.emoji} ${gift.name}`,
-    type:        'gift_event',
-    gift_name:   gift.name,
-    gift_emoji:  gift.emoji,
-    gift_tokens: totalTokens,
-    is_private:  false,
-  }).catch(() => { /* non-fatal — gift already succeeded */ })
+  try {
+    await service.from('live_chat_messages').insert({
+      stream_id,
+      sender_id:   user.id,
+      message:     `sent ${quantity > 1 ? `${quantity}x ` : ''}${gift.emoji} ${gift.name}`,
+      type:        'gift_event',
+      gift_name:   gift.name,
+      gift_emoji:  gift.emoji,
+      gift_tokens: totalTokens,
+      is_private:  false,
+    })
+  } catch (e) {
+    console.error('[live/gift] gift chat message failed (non-fatal):', e)
+  }
 
   return NextResponse.json({
     success:           true,

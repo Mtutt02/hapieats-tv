@@ -44,7 +44,6 @@ export default async function ChefVerificationPage() {
     .maybeSingle()
 
   const isVerified = profile?.is_verified_chef ?? false
-  const appStatus = application?.status
 
   return (
     <div className="min-h-screen bg-background">
@@ -89,7 +88,7 @@ export default async function ChefVerificationPage() {
         )}
 
         {/* State: Pending Review */}
-        {!isVerified && appStatus === 'pending' && (
+        {!isVerified && application?.status === 'pending' && (
           <div className="rounded-2xl border border-amber-500/20 bg-card p-8">
             <div className="flex items-start gap-4">
               <div className="h-10 w-10 rounded-xl bg-amber-500/15 flex items-center justify-center flex-shrink-0">
@@ -132,7 +131,7 @@ export default async function ChefVerificationPage() {
         )}
 
         {/* State: Denied */}
-        {!isVerified && appStatus === 'denied' && (
+        {!isVerified && application?.status === 'denied' && (
           <div className="rounded-2xl border border-destructive/20 bg-card p-8">
             <div className="flex items-start gap-4">
               <div className="h-10 w-10 rounded-xl bg-destructive/10 flex items-center justify-center flex-shrink-0">
@@ -171,7 +170,7 @@ export default async function ChefVerificationPage() {
         )}
 
         {/* State: No Application — Show Form */}
-        {!isVerified && !appStatus && (
+        {!isVerified && !application?.status && (
           <div className="space-y-6">
             {/* What qualifies */}
             <div className="rounded-2xl border bg-card p-6">

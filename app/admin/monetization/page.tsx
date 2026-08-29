@@ -13,7 +13,7 @@ export default async function AdminMonetizationPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, display_name, username')
     .eq('id', user.id)
     .single()
 
@@ -63,7 +63,7 @@ export default async function AdminMonetizationPage() {
   const reviewed = enriched.filter((r: any) => r.status !== 'pending')
 
   return (
-    <AdminShell>
+    <AdminShell role={profile.role} displayName={profile.display_name ?? profile.username ?? 'Admin'}>
       <MonetizationReviewClient pending={pending} reviewed={reviewed} />
     </AdminShell>
   )

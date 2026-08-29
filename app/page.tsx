@@ -40,23 +40,48 @@ export default async function HomePage() {
   const hasRealContent = (dbVideos?.length ?? 0) > 0
   const followedStationIds = (followedRows ?? []).map((r: { station_id: string }) => r.station_id)
 
-  // Build video gallery schema from real + sample content
-  const allVideos = [...((dbVideos as Video[]) ?? []), ...SAMPLE_VIDEOS].slice(0, 20)
+  // Build video gallery schema from real + sample content.
+  // Video (snake_case, from the DB) and SampleVideo (camelCase, static) do not
+  // share field names, so normalize both into one shape before emitting JSON-LD.
+  interface GalleryItem {
+    name: string
+    description: string
+    thumbnailUrl?: string
+    uploadDate?: string
+    contentUrl?: string
+    duration?: string
+  }
+
+  // schema.org wants an ISO-8601 duration; the DB stores whole seconds.
+  const isoDuration = (seconds: number | null | undefined) =>
+    seconds && seconds > 0 ? `PT${Math.floor(seconds / 60)}M${seconds % 60}S` : undefined
+
+  const realItems: GalleryItem[] = ((dbVideos as Video[]) ?? []).map((v) => ({
+    name: v.title || 'Food Video',
+    description: v.description || `Watch ${v.title || 'a food video'} on HapiEats TV`,
+    thumbnailUrl: v.thumbnail_url ?? undefined,
+    uploadDate: v.published_at ?? v.created_at ?? undefined,
+    // Only real rows have a watch page; sample content would 404.
+    contentUrl: `https://hapieatstv.com/watch/${v.id}`,
+    duration: isoDuration(v.duration),
+  }))
+
+  const sampleItems: GalleryItem[] = SAMPLE_VIDEOS.map((v) => ({
+    name: v.title || 'Food Video',
+    description: `Watch ${v.title || 'a food video'} on HapiEats TV`,
+    thumbnailUrl: v.thumbnailUrl,
+    uploadDate: v.publishedAt,
+  }))
+
   const videoGallerySchema = {
     '@context': 'https://schema.org',
     '@type': 'VideoGallery',
     name: "HapiEats TV — Food Videos",
     description: 'Watch food creators cook, bake, grill, and explore cuisines from around the world.',
     url: 'https://hapieatstv.com',
-    video: allVideos.map(v => ({
+    video: [...realItems, ...sampleItems].slice(0, 20).map((item) => ({
       '@type': 'VideoObject',
-      name: v.title || 'Food Video',
-      description: v.description || `Watch ${v.title || 'a food video'} on HapiEats TV`,
-      thumbnailUrl: v.thumbnail_url || v.thumbnail,
-      uploadDate: v.published_at || v.created_at || new Date().toISOString().split('T')[0],
-      contentUrl: v.video_url ? `https://hapieatstv.com/watch/${v.id}` : undefined,
-      embedUrl: v.embed_url || undefined,
-      duration: v.duration || undefined,
+      ...item,
     })),
   }
 

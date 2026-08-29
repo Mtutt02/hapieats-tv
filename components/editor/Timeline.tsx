@@ -29,6 +29,7 @@ export default function Timeline({
   currentTime,
   onSeek,
   onDeleteClip,
+  onSelectClip,
   zoom,
   onZoomChange,
 }: TimelineProps) {

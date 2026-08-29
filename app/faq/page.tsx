@@ -558,10 +558,10 @@ export default function FAQPage() {
     '@type': 'FAQPage',
     mainEntity: FAQ_SECTIONS.flatMap(s => s.items).map(item => ({
       '@type': 'Question',
-      name: typeof item.q === 'string' ? item.q : item.q?.toString(),
+      name: String(item.q),
       acceptedAnswer: {
         '@type': 'Answer',
-        text: typeof item.a === 'string' ? item.a : item.a?.toString().replace(/<[^>]*>/g, '')?.substring(0, 500),
+        text: String(item.a).replace(/<[^>]*>/g, '').substring(0, 500),
       },
     })),
   }), [])
