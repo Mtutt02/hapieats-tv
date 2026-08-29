@@ -963,7 +963,11 @@ function MuxPlayerWrapper({ playbackId, muted, isLive, onVideoReady, onEnded }: 
   > | null>(null)
 
   useEffect(() => {
-    import('@mux/mux-player-react').then(m => setMuxPlayer(() => m.default))
+    import('@mux/mux-player-react').then(m =>
+      setMuxPlayer(() => m.default as unknown as React.ComponentType<
+        Record<string, unknown> & { onEnded?: () => void }
+      >),
+    )
   }, [])
 
   useEffect(() => {

@@ -131,7 +131,7 @@ export async function renderEditedVideo(
 
   // Read output
   const data = await ff.readFile('output.mp4')
-  const blob = new Blob([data], { type: 'video/mp4' })
+  const blob = new Blob([data as BlobPart], { type: 'video/mp4' })
 
   // Cleanup
   try {

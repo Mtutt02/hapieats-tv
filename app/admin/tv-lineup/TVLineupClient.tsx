@@ -11,13 +11,13 @@ import { cn } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface HapiChannel {
+export interface HapiChannel {
   id: string
   name: string
   slug: string
 }
 
-interface LineupSlot {
+export interface LineupSlot {
   id: string
   channel_number: number
   name: string

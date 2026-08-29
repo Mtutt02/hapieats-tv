@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
+import { one } from '@/lib/supabase/relation'
 import { createServiceClient } from '@/lib/supabase/server'
-import TVLineupClient from './TVLineupClient'
+import TVLineupClient, { type HapiChannel, type LineupSlot } from './TVLineupClient'
 
 export const metadata: Metadata = { title: 'TV Lineup — Admin' }
 export const dynamic = 'force-dynamic'
@@ -23,6 +24,12 @@ export default async function TVLineupPage() {
       .order('name', { ascending: true }),
   ])
 
+  // PostgREST types the embedded channel as an array; it is many-to-one.
+  const lineupSlots = (lineup ?? []).map((slot) => ({
+    ...slot,
+    channel: one(slot.channel as unknown as HapiChannel | HapiChannel[]),
+  })) as LineupSlot[]
+
   return (
     <div>
       <div className="mb-6">
@@ -31,7 +38,7 @@ export default async function TVLineupPage() {
           Assign fixed channel numbers so viewers can type CH 06 or CH 13 on the remote and land on the right content.
         </p>
       </div>
-      <TVLineupClient lineup={lineup ?? []} channels={channels ?? []} />
+      <TVLineupClient lineup={lineupSlots} channels={channels ?? []} />
     </div>
   )
 }

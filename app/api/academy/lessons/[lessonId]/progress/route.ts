@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { one } from '@/lib/supabase/relation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
@@ -37,9 +38,8 @@ export async function POST(req: NextRequest, { params }: { params: { lessonId: s
       .single()
     if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 })
 
-    const course = lesson.course as
-      | { id: string; creator_id: string; pricing_model: string; pro_included: boolean; status: string }
-      | null
+    type CourseRel = { id: string; creator_id: string; pricing_model: string; pro_included: boolean; status: string }
+    const course = one(lesson.course as unknown as CourseRel | CourseRel[])
     if (!course) return NextResponse.json({ error: 'Course not found' }, { status: 404 })
     const courseId = (lesson.course_id as string | null) ?? course.id
 

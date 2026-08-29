@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { one } from '@/lib/supabase/relation'
 
 // Verify user owns the lesson's course
 async function verifyLessonOwner(supabase: ReturnType<typeof createClient>, userId: string, lessonId: string) {
@@ -10,8 +11,9 @@ async function verifyLessonOwner(supabase: ReturnType<typeof createClient>, user
     .single()
 
   if (!data) return false
-  const section = data.section as { course: { creator_id: string } } | null
-  return section?.course?.creator_id === userId
+  const section = one(data.section as unknown as { course: unknown } | { course: unknown }[])
+  const course = section ? one(section.course as { creator_id: string } | { creator_id: string }[]) : null
+  return !!course && course.creator_id === userId
 }
 
 export async function PATCH(

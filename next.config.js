@@ -2,10 +2,15 @@
 const nextConfig = {
   poweredByHeader: false,
   eslint: {
+    // Still ignored: the project has no ESLint config yet, so enabling this
+    // would fail the build rather than gate it. Add one, then flip to false.
     ignoreDuringBuilds: true,
   },
   typescript: {
-    ignoreBuildErrors: true,
+    // Type errors now block the build. The repo typechecks clean; keeping this
+    // gate on is what stops a compile-visible bug from shipping as a runtime
+    // failure (which is exactly how the live-gifting 500 reached production).
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,

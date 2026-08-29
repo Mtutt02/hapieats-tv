@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { createServiceClient } from '@/lib/supabase/server'
+import { one } from '@/lib/supabase/relation'
 import AppShell from '@/components/layout/AppShell'
 import TVBrowser, { TVChannel } from '@/components/tv/TVBrowser'
 
@@ -85,7 +86,7 @@ export default async function TVPage() {
       if (!ls.mux_playback_id) continue
       channels.push({
         number: liveNum++,
-        name: (ls.channel as { name: string } | null)?.name ?? 'Live Channel',
+        name: one(ls.channel as unknown as { name: string } | { name: string }[])?.name ?? 'Live Channel',
         icon: '',
         description: 'Live right now',
         category: 'LIVE',
