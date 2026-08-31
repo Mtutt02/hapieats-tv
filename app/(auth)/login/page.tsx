@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import MunchorSignIn from '@/components/auth/MunchorSignIn'
 
 function LoginContent() {
   const [email, setEmail] = useState('')
@@ -19,6 +20,18 @@ function LoginContent() {
   const searchParams = useSearchParams()
   const rawRedirect = searchParams.get('redirect') ?? '/'
   const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/'
+
+  // /api/auth/munchor/confirm bounces failures back here with a reason code.
+  const MUNCHOR_ERRORS: Record<string, string> = {
+    missing_token:    'That confirmation link was incomplete. Try signing in with Munchor again.',
+    missing_code:     'That confirmation link was incomplete. Try signing in with Munchor again.',
+    invalid_token:    'That confirmation link is not valid. Try signing in with Munchor again.',
+    already_used:     'That confirmation link has already been used.',
+    link_expired:     'That confirmation link expired. Sign in with Munchor to get a new one.',
+    account_mismatch: 'That link was issued for a different account.',
+    link_failed:      'We could not connect your Munchor account. Please try again.',
+  }
+  const munchorError = MUNCHOR_ERRORS[searchParams.get('munchor_error') ?? ''] ?? null
   const supabase = createClient()
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -126,9 +139,9 @@ function LoginContent() {
                 </div>
               )}
 
-              {error && (
+              {(error || munchorError) && (
                 <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
-                  {error}
+                  {error ?? munchorError}
                 </p>
               )}
 
@@ -148,6 +161,13 @@ function LoginContent() {
               >
                 {mode === 'magic' ? 'Sign in with a password instead' : '✨ Sign in with a magic link (no password)'}
               </button>
+
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
+                <div className="relative flex justify-center"><span className="bg-card px-2 text-[11px] text-muted-foreground">or</span></div>
+              </div>
+
+              <MunchorSignIn redirect={redirect} />
             </form>
           )}
         </div>

@@ -259,4 +259,24 @@ NEXT_PUBLIC_STRIPE_PLATFORM_PRICE_ID
 NEXT_PUBLIC_APP_URL=https://hapieatstv.com
 ```
 
+### Munchor SSO (optional — omit to disable the feature)
+```
+MUNCHOR_SUPABASE_URL          # https://<munchor-ref>.supabase.co
+MUNCHOR_SUPABASE_ANON_KEY     # Munchor's anon key. NEVER its service-role key.
+```
+Also add `https://hapieatstv.com/api/auth/munchor/confirm` to the HapiEats
+Supabase project's **Auth → URL Configuration → Redirect URLs**, or the
+confirmation email's link will be rejected.
+
+### Undocumented but required elsewhere in the code
+```
+CRON_SECRET                     # guards the daily /api/admin/ai-moderate cron;
+                                # unset = the cron 401s and silently does nothing
+ANTHROPIC_API_KEY               # AI moderation, help chat, course ideas
+MUX_SIGNING_KEY_ID              # signed playback (helper currently unused)
+MUX_SIGNING_PRIVATE_KEY         # signed playback (helper currently unused)
+REVENUECAT_WEBHOOK_SECRET       # mobile IAP webhook; unset = returns 503
+NEXT_PUBLIC_STRIPE_PRO_PRICE_ID # Creator Pro checkout
+```
+
 Never commit `.env.local`. It is in `.gitignore`.
