@@ -24,20 +24,57 @@ export interface MunchorUser {
   avatarUrl: string | null
 }
 
+/**
+ * Normalize the configured Munchor URL.
+ *
+ * Supabase shows the project URL with the scheme, but it is easy to paste just
+ * the host (`abc.supabase.co`) or leave a trailing slash or stray whitespace.
+ * None of those are really misconfiguration, so accept them rather than
+ * silently disabling the whole feature.
+ */
+export function munchorUrl(): string | null {
+  const raw = process.env.MUNCHOR_SUPABASE_URL?.trim().replace(/\/+$/, '')
+  if (!raw || raw.includes('placeholder')) return null
+  if (raw.startsWith('https://')) return raw
+  if (raw.startsWith('http://')) return `https://${raw.slice(7)}`
+  if (/^[\w-]+\.[\w.-]+$/.test(raw)) return `https://${raw}`   // bare host
+  return null
+}
+
+export function munchorKey(): string | null {
+  const key = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
+  if (!key || key.length <= 20 || key.includes('placeholder')) return null
+  return key
+}
+
 export function isMunchorConfigured(): boolean {
-  const url = process.env.MUNCHOR_SUPABASE_URL
-  const key = process.env.MUNCHOR_SUPABASE_ANON_KEY
-  return Boolean(
-    url && key && url.startsWith('https://') && !url.includes('placeholder') && key.length > 20,
-  )
+  return Boolean(munchorUrl() && munchorKey())
+}
+
+/**
+ * Why the feature is switched off, for the status endpoint.
+ * Reports which check failed — never the values themselves.
+ */
+export function munchorConfigProblems(): string[] {
+  const problems: string[] = []
+  const rawUrl = process.env.MUNCHOR_SUPABASE_URL?.trim()
+  const rawKey = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
+
+  if (!rawUrl) problems.push('MUNCHOR_SUPABASE_URL is not set on this deployment')
+  else if (rawUrl.includes('placeholder')) problems.push('MUNCHOR_SUPABASE_URL still contains "placeholder"')
+  else if (!munchorUrl()) problems.push('MUNCHOR_SUPABASE_URL is not a usable URL (expected https://<ref>.supabase.co)')
+
+  if (!rawKey) problems.push('MUNCHOR_SUPABASE_ANON_KEY is not set on this deployment')
+  else if (rawKey.includes('placeholder')) problems.push('MUNCHOR_SUPABASE_ANON_KEY still contains "placeholder"')
+  else if (rawKey.length <= 20) problems.push('MUNCHOR_SUPABASE_ANON_KEY looks too short to be a real key')
+
+  return problems
 }
 
 function munchorClient() {
-  return createSupabaseClient(
-    process.env.MUNCHOR_SUPABASE_URL!,
-    process.env.MUNCHOR_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false } },
-  )
+  return createSupabaseClient(munchorUrl()!, munchorKey()!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 }
 
 export type MunchorAuthResult =
