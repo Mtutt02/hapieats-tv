@@ -260,10 +260,21 @@ NEXT_PUBLIC_APP_URL=https://hapieatstv.com
 ```
 
 ### Munchor SSO (optional — omit to disable the feature)
+Either set env vars (needs a redeploy to take effect):
 ```
 MUNCHOR_SUPABASE_URL          # https://<munchor-ref>.supabase.co
 MUNCHOR_SUPABASE_ANON_KEY     # Munchor's anon key. NEVER its service-role key.
 ```
+…or store them in the DB, which is read per request and applies immediately:
+```sql
+insert into platform_settings (key, value, description) values
+  ('munchor_sso',
+   '{"url":"https://<munchor-ref>.supabase.co","anon_key":"<munchor anon key>"}'::jsonb,
+   'Munchor SSO credentials. ANON key only — never the service-role key.')
+on conflict (key) do update set value = excluded.value, updated_at = now();
+```
+Env vars win when both are present. `/api/auth/munchor/status` reports which
+source is in use and what is missing.
 Also add `https://hapieatstv.com/api/auth/munchor/confirm` to the HapiEats
 Supabase project's **Auth → URL Configuration → Redirect URLs**, or the
 confirmation email's link will be rejected.

@@ -25,15 +25,26 @@ export interface MunchorUser {
 }
 
 /**
- * Normalize the configured Munchor URL.
+ * Resolve the Munchor credentials.
  *
- * Supabase shows the project URL with the scheme, but it is easy to paste just
- * the host (`abc.supabase.co`) or leave a trailing slash or stray whitespace.
- * None of those are really misconfiguration, so accept them rather than
- * silently disabling the whole feature.
+ * Two sources, checked in order:
+ *   1. Environment variables (MUNCHOR_SUPABASE_URL / MUNCHOR_SUPABASE_ANON_KEY)
+ *   2. The `munchor_sso` row in platform_settings
+ *
+ * The database fallback exists because Vercel only applies environment
+ * variables to deployments created after they are saved, so setting them is a
+ * two-step dance (save, then redeploy) that is easy to get half-done. A
+ * platform_settings row is read per request and takes effect immediately.
+ *
+ * Only the ANON key belongs here either way. It is public by design — it ships
+ * in Munchor's own client bundles — so holding it in an admin-only table is no
+ * weaker than holding it in an env var. Munchor's service-role key must never
+ * be stored in either place.
  */
-export function munchorUrl(): string | null {
-  const raw = process.env.MUNCHOR_SUPABASE_URL?.trim().replace(/\/+$/, '')
+
+/** Accept the URL forms people actually paste; reject genuine nonsense. */
+function normalizeUrl(value: string | null | undefined): string | null {
+  const raw = value?.trim().replace(/\/+$/, '')
   if (!raw || raw.includes('placeholder')) return null
   if (raw.startsWith('https://')) return raw
   if (raw.startsWith('http://')) return `https://${raw.slice(7)}`
@@ -41,38 +52,86 @@ export function munchorUrl(): string | null {
   return null
 }
 
-export function munchorKey(): string | null {
-  const key = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
+function normalizeKey(value: string | null | undefined): string | null {
+  const key = value?.trim()
   if (!key || key.length <= 20 || key.includes('placeholder')) return null
   return key
 }
 
-export function isMunchorConfigured(): boolean {
-  return Boolean(munchorUrl() && munchorKey())
+export interface MunchorConfig {
+  url: string
+  key: string
+  source: 'env' | 'database'
+}
+
+/** Read the `munchor_sso` settings row, if present. */
+async function configFromDatabase(): Promise<{ url: string | null; key: string | null }> {
+  try {
+    const { createServiceClient } = await import('@/lib/supabase/server')
+    const { data } = await createServiceClient()
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'munchor_sso')
+      .maybeSingle()
+
+    const v = (data?.value ?? null) as { url?: string; anon_key?: string } | null
+    return { url: normalizeUrl(v?.url), key: normalizeKey(v?.anon_key) }
+  } catch (err) {
+    console.error('[munchor] could not read munchor_sso from platform_settings:', err)
+    return { url: null, key: null }
+  }
+}
+
+export async function getMunchorConfig(): Promise<MunchorConfig | null> {
+  const envUrl = normalizeUrl(process.env.MUNCHOR_SUPABASE_URL)
+  const envKey = normalizeKey(process.env.MUNCHOR_SUPABASE_ANON_KEY)
+  if (envUrl && envKey) return { url: envUrl, key: envKey, source: 'env' }
+
+  const db = await configFromDatabase()
+  if (db.url && db.key) return { url: db.url, key: db.key, source: 'database' }
+
+  return null
+}
+
+export async function isMunchorConfigured(): Promise<boolean> {
+  return (await getMunchorConfig()) !== null
 }
 
 /**
  * Why the feature is switched off, for the status endpoint.
- * Reports which check failed — never the values themselves.
+ * Names what is missing — never the values themselves.
  */
-export function munchorConfigProblems(): string[] {
+export async function munchorConfigProblems(): Promise<string[]> {
+  const envUrl = normalizeUrl(process.env.MUNCHOR_SUPABASE_URL)
+  const envKey = normalizeKey(process.env.MUNCHOR_SUPABASE_ANON_KEY)
+  if (envUrl && envKey) return []
+
+  const db = await configFromDatabase()
+  if (db.url && db.key) return []
+
   const problems: string[] = []
-  const rawUrl = process.env.MUNCHOR_SUPABASE_URL?.trim()
-  const rawKey = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
+  const rawEnvUrl = process.env.MUNCHOR_SUPABASE_URL?.trim()
+  const rawEnvKey = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
 
-  if (!rawUrl) problems.push('MUNCHOR_SUPABASE_URL is not set on this deployment')
-  else if (rawUrl.includes('placeholder')) problems.push('MUNCHOR_SUPABASE_URL still contains "placeholder"')
-  else if (!munchorUrl()) problems.push('MUNCHOR_SUPABASE_URL is not a usable URL (expected https://<ref>.supabase.co)')
-
-  if (!rawKey) problems.push('MUNCHOR_SUPABASE_ANON_KEY is not set on this deployment')
-  else if (rawKey.includes('placeholder')) problems.push('MUNCHOR_SUPABASE_ANON_KEY still contains "placeholder"')
-  else if (rawKey.length <= 20) problems.push('MUNCHOR_SUPABASE_ANON_KEY looks too short to be a real key')
-
+  if (!envUrl && !db.url) {
+    problems.push(
+      rawEnvUrl
+        ? 'Munchor URL is set but unusable (expected https://<ref>.supabase.co)'
+        : 'Munchor URL is not set — add it via env var or the munchor_sso settings row',
+    )
+  }
+  if (!envKey && !db.key) {
+    problems.push(
+      rawEnvKey
+        ? 'Munchor anon key is set but looks too short to be real'
+        : 'Munchor anon key is not set — add it via env var or the munchor_sso settings row',
+    )
+  }
   return problems
 }
 
-function munchorClient() {
-  return createSupabaseClient(munchorUrl()!, munchorKey()!, {
+function munchorClient(config: MunchorConfig) {
+  return createSupabaseClient(config.url, config.key, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 }
@@ -92,9 +151,10 @@ export async function authenticateWithMunchor(
   email: string,
   password: string,
 ): Promise<MunchorAuthResult> {
-  if (!isMunchorConfigured()) return { ok: false, reason: 'not_configured' }
+  const config = await getMunchorConfig()
+  if (!config) return { ok: false, reason: 'not_configured' }
 
-  const munchor = munchorClient()
+  const munchor = munchorClient(config)
 
   let data
   try {

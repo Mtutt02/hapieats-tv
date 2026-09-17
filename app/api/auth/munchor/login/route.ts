@@ -149,7 +149,7 @@ async function requestLinkConfirmation(
 }
 
 export async function POST(req: NextRequest) {
-  if (!isMunchorConfigured()) {
+  if (!(await isMunchorConfigured())) {
     return NextResponse.json(
       { error: 'Munchor sign-in is not configured yet.' },
       { status: 503 },

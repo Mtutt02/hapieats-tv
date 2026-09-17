@@ -17,15 +17,16 @@ export const dynamic = 'force-dynamic'
  * material is exposed.
  */
 export async function GET() {
-  if (isMunchorConfigured()) {
+  if (await isMunchorConfigured()) {
     return NextResponse.json({ enabled: true })
   }
 
   return NextResponse.json({
     enabled: false,
-    problems: munchorConfigProblems(),
+    problems: await munchorConfigProblems(),
     hint:
-      'Vercel only applies environment variables to deployments created after ' +
-      'they are saved. If these were added after the last deploy, redeploy to pick them up.',
+      'Set these either as Vercel environment variables (which need a redeploy to ' +
+      'take effect) or as the munchor_sso row in platform_settings, which is read ' +
+      'per request and applies immediately.',
   })
 }
