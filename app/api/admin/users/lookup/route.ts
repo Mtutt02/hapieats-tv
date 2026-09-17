@@ -31,10 +31,14 @@ export async function GET(req: NextRequest) {
   // Search by username or email
   let data, error
   if (query.includes('@')) {
+    // Case-insensitive, but still an EXACT match: `_` and `%` are LIKE
+    // metacharacters and are legal in an email local-part, so escape them or
+    // `a_b@x.com` silently matches `aXb@x.com` — a different person.
+    const emailPattern = query.replace(/([\\%_])/g, '\\$1')
     ;({ data, error } = await serviceClient
       .from('profiles')
       .select('id, username, display_name, email, is_creator, role')
-      .eq('email', query)
+      .ilike('email', emailPattern)
       .single())
   } else {
     ;({ data, error } = await serviceClient
