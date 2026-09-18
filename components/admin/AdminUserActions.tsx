@@ -31,8 +31,28 @@ export default function AdminUserActions({ userId, role, suspended, isCreator, c
     if (type !== 'toggle_creator') router.refresh()
   }
 
+  const resetPassword = async () => {
+    const newPassword = prompt('Enter a new password for this user (min 8 characters):')
+    if (newPassword == null) return // cancelled
+    if (newPassword.length < 8) { alert('Password must be at least 8 characters'); return }
+    setLoading(true)
+    const res = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, action: 'set_password', newPassword }),
+    })
+    const data = await res.json().catch(() => ({}))
+    setLoading(false)
+    alert(
+      res.ok && data.success
+        ? 'Password updated. Share it with the user securely and have them change it after signing in.'
+        : (data.error ?? 'Failed to update password')
+    )
+  }
+
   const isSuperAdmin = role === 'superadmin'
   const callerIsSuperAdmin = callerRole === 'superadmin'
+  const callerCanResetPw = ['admin', 'superadmin'].includes(callerRole)
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -74,6 +94,15 @@ export default function AdminUserActions({ userId, role, suspended, isCreator, c
               className="text-xs px-2 py-1 rounded bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
             >
               Remove Admin
+            </button>
+          )}
+          {callerCanResetPw && (
+            <button
+              onClick={resetPassword}
+              disabled={loading}
+              className="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+            >
+              Reset Password
             </button>
           )}
         </>
