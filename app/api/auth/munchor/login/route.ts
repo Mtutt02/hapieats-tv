@@ -4,8 +4,12 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import {
   authenticateWithMunchor,
+  authenticateWithMunchorUsername,
   isMunchorConfigured,
+  toE164,
   usernameFromMunchor,
+  verifyMunchorCode,
+  type MunchorAuthResult,
   type MunchorUser,
 } from '@/lib/munchor'
 
@@ -13,7 +17,14 @@ export const dynamic = 'force-dynamic'
 
 /**
  * POST /api/auth/munchor/login
- * Body: { email, password, next? }
+ * Body, one of:
+ *   { method: 'password', identifier, password, next? }  identifier = email or username
+ *   { method: 'code', email, code, next? }                code from Munchor's email
+ *   { method: 'code', phone, code, next? }                code from Munchor's text
+ *   { email, password, next? }                            legacy shape, = password
+ *
+ * The same ways in as Munchor's own login. Codes are sent by
+ * /api/auth/munchor/send-code and checked against Munchor here.
  *
  * Signs a Munchor user into HapiEats TV. Munchor lives on a separate Supabase
  * project, so the credentials are verified against Munchor's auth server and
@@ -97,7 +108,7 @@ async function signInAs(email: string): Promise<{ ok: true } | { ok: false; erro
 /** Park a pending link and email the owner of the address a confirmation link. */
 async function requestLinkConfirmation(
   hapieatsUserId: string,
-  munchorUser: MunchorUser,
+  munchorUser: MunchorUser & { email: string },
   next: string,
 ): Promise<NextResponse> {
   const service = createServiceClient()
@@ -148,6 +159,89 @@ async function requestLinkConfirmation(
   })
 }
 
+/**
+ * Address used for the HapiEats account of a Munchor user who has no usable
+ * email (a phone-only Munchor account). Derived from the Munchor id, so it is
+ * unique per Munchor account and can only ever be reached through that
+ * account's link. Nothing is ever sent to it: sessions are minted server-side.
+ */
+const phoneOnlyEmail = (munchorUserId: string) => `munchor-${munchorUserId}@users.hapieatstv.com`
+
+/** Create the HapiEats auth user + profile for a Munchor identity. */
+async function createHapieatsAccount(
+  munchorUser: MunchorUser,
+  email: string,
+  emailConfirmed: boolean,
+): Promise<{ ok: true; id: string } | { ok: false }> {
+  const service = createServiceClient()
+  const username = await pickAvailableUsername(service, usernameFromMunchor(munchorUser))
+
+  const { data: created, error: createErr } = await service.auth.admin.createUser({
+    email,
+    email_confirm: emailConfirmed,
+    user_metadata: {
+      full_name: munchorUser.displayName ?? undefined,
+      avatar_url: munchorUser.avatarUrl ?? undefined,
+      username,
+      provider: 'munchor',
+    },
+  })
+  if (createErr || !created?.user) {
+    console.error('[munchor/login] createUser failed:', createErr?.message)
+    return { ok: false }
+  }
+  const id = created.user.id
+
+  // Profile row — the handle_new_user trigger may already have made one.
+  const { data: hasProfile } = await service.from('profiles').select('id').eq('id', id).maybeSingle()
+  if (!hasProfile) {
+    const { error: profileErr } = await service.from('profiles').insert({
+      id,
+      username,
+      display_name: munchorUser.displayName ?? username,
+      avatar_url: munchorUser.avatarUrl,
+      role: 'user',
+    })
+    // A duplicate here means the trigger won the race — harmless.
+    if (profileErr && (profileErr as { code?: string }).code !== '23505') {
+      console.error('[munchor/login] profile insert failed:', profileErr)
+    }
+  }
+  return { ok: true, id }
+}
+
+/** Record the HapiEats <-> Munchor link. An existing identical link is fine. */
+async function linkAccounts(hapieatsUserId: string, munchorUser: MunchorUser): Promise<boolean> {
+  const { error } = await createServiceClient().from('munchor_identities').insert({
+    hapieats_user_id: hapieatsUserId,
+    munchor_user_id: munchorUser.id,
+    // NOT NULL column; a phone-only Munchor account is recorded by its number.
+    munchor_email: munchorUser.email ?? (munchorUser.phone ? `+${munchorUser.phone.replace(/^\+/, '')}` : ''),
+    last_login_at: new Date().toISOString(),
+  })
+  if (error && (error as { code?: string }).code !== '23505') {
+    console.error('[munchor/login] link insert failed:', error)
+    return false
+  }
+  return true
+}
+
+async function linkAndSignIn(
+  hapieatsUserId: string,
+  email: string,
+  munchorUser: MunchorUser,
+  extra: Record<string, unknown> = {},
+): Promise<NextResponse> {
+  if (!(await linkAccounts(hapieatsUserId, munchorUser))) {
+    return NextResponse.json({ error: 'Could not connect your Munchor account' }, { status: 500 })
+  }
+  const session = await signInAs(email)
+  if (!session.ok) return NextResponse.json({ error: session.error }, { status: 500 })
+  return NextResponse.json({ status: 'signed_in', ...extra })
+}
+
+type Proof = 'password' | 'email_code' | 'phone_code'
+
 export async function POST(req: NextRequest) {
   if (!(await isMunchorConfigured())) {
     return NextResponse.json(
@@ -156,51 +250,104 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let body: { email?: string; password?: string; next?: string }
+  let body: {
+    method?: string
+    identifier?: string
+    email?: string
+    phone?: string
+    password?: string
+    code?: string
+    next?: string
+  }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
   }
 
-  const email = (body.email ?? '').trim().toLowerCase()
-  const password = body.password ?? ''
-  if (!email || !password) {
-    return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
-  }
-
-  // Throttle by email and by IP: the email bucket slows an attack on one
-  // account, the IP bucket slows spraying across many.
   const ip =
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     req.headers.get('x-real-ip') ??
     'unknown'
-  for (const key of [`munchor_login:email:${email}`, `munchor_login:ip:${ip}`]) {
-    if (!checkRateLimit(key, 8, 10 * 60_000).allowed) {
+  const throttled = (subject: string) =>
+    [`munchor_login:${subject}`, `munchor_login:ip:${ip}`].some(
+      (key) => !checkRateLimit(key, 8, 10 * 60_000).allowed,
+    )
+  const tooMany = () =>
+    NextResponse.json(
+      { error: 'Too many sign-in attempts — please wait a few minutes.' },
+      { status: 429 },
+    )
+
+  // ── 1. Verify with Munchor, by whichever method the user chose ───────────
+  let proof: Proof
+  let auth: MunchorAuthResult
+
+  if (body.method === 'code') {
+    const code = (body.code ?? '').replace(/\s/g, '')
+    if (!/^\d{6,10}$/.test(code)) {
+      return NextResponse.json({ error: 'Enter the code Munchor sent you' }, { status: 400 })
+    }
+    if (typeof body.phone === 'string' && body.phone.trim()) {
+      const phone = toE164(body.phone)
+      if (!phone) return NextResponse.json({ error: 'Enter a full phone number' }, { status: 400 })
+      if (throttled(`phone:${phone}`)) return tooMany()
+      proof = 'phone_code'
+      auth = await verifyMunchorCode({ phone }, code)
+    } else {
+      const email = (body.email ?? '').trim().toLowerCase()
+      if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 })
+      if (throttled(`email:${email}`)) return tooMany()
+      proof = 'email_code'
+      auth = await verifyMunchorCode({ email }, code)
+    }
+    if (!auth.ok && auth.reason === 'invalid_credentials') {
       return NextResponse.json(
-        { error: 'Too many sign-in attempts — please wait a few minutes.' },
-        { status: 429 },
+        { error: 'That code is wrong or has expired — request a new one.' },
+        { status: 401 },
       )
+    }
+  } else {
+    const identifier = (body.identifier ?? body.email ?? '').trim()
+    const password = body.password ?? ''
+    if (!identifier || !password) {
+      return NextResponse.json(
+        { error: 'Email or username and password are required' },
+        { status: 400 },
+      )
+    }
+    // Throttle by identifier and by IP: the first slows an attack on one
+    // account, the second slows spraying across many.
+    if (throttled(identifier.toLowerCase())) return tooMany()
+    proof = 'password'
+    auth = identifier.includes('@')
+      ? await authenticateWithMunchor(identifier.toLowerCase(), password)
+      : await authenticateWithMunchorUsername(identifier.replace(/^@/, ''), password)
+    if (!auth.ok && auth.reason === 'invalid_credentials') {
+      // Identical for "no such user" and "wrong password" so this endpoint
+      // cannot be used to enumerate Munchor accounts.
+      return NextResponse.json({ error: 'Incorrect Munchor login or password' }, { status: 401 })
     }
   }
 
-  // ── 1. Verify against Munchor ────────────────────────────────────────────
-  const auth = await authenticateWithMunchor(email, password)
   if (!auth.ok) {
     if (auth.reason === 'not_configured') {
       return NextResponse.json({ error: 'Munchor sign-in is not configured yet.' }, { status: 503 })
     }
-    // Deliberately identical for "no such user" and "wrong password" so this
-    // endpoint cannot be used to enumerate Munchor accounts.
-    return NextResponse.json({ error: 'Incorrect Munchor email or password' }, { status: 401 })
+    return NextResponse.json(
+      { error: 'Could not reach Munchor — please try again.' },
+      { status: 502 },
+    )
   }
+
   const munchorUser = auth.user
   const service = createServiceClient()
+  const next = typeof body.next === 'string' && body.next.startsWith('/') ? body.next : '/dashboard'
 
   // ── 2. Already linked? ───────────────────────────────────────────────────
   const { data: existingLink } = await service
     .from('munchor_identities')
-    .select('hapieats_user_id, munchor_email')
+    .select('hapieats_user_id')
     .eq('munchor_user_id', munchorUser.id)
     .maybeSingle()
 
@@ -222,93 +369,65 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: 'signed_in', linked: true })
   }
 
-  // ── 3. Is there already a HapiEats account on this email? ────────────────
-  // public.profiles has no email column (see 001_initial.sql), so auth.users is
-  // the only authoritative place to resolve an address. The RPC does an exact,
-  // case-insensitive match — a `like` here would treat the `_` and `%` that are
-  // legal in an email local-part as wildcards and match the wrong account.
-  const { data: existingUserId, error: lookupErr } = await service.rpc(
-    'find_user_id_by_email',
-    { p_email: munchorUser.email },
-  )
-  if (lookupErr) {
-    console.error('[munchor/login] email lookup failed:', lookupErr)
-    return NextResponse.json({ error: 'Could not complete sign-in' }, { status: 500 })
+  // Which email may HapiEats act on? Munchor must have verified it, or the
+  // user must have just proven the mailbox by typing the code sent to it.
+  const mailboxProvenNow = proof === 'email_code'
+  const email = munchorUser.email
+  const emailTrusted = Boolean(email) && (munchorUser.emailConfirmed || mailboxProvenNow)
+
+  if (email && (emailTrusted || proof === 'password')) {
+    const withEmail = { ...munchorUser, email }
+
+    // ── 3. Is there already a HapiEats account on this email? ──────────────
+    // public.profiles has no reliable email column, so auth.users is the only
+    // authoritative place to resolve an address. The RPC does an exact,
+    // case-insensitive match — a `like` here would treat the `_` and `%` that
+    // are legal in an email local-part as wildcards and match the wrong account.
+    const { data: existingUserId, error: lookupErr } = await service.rpc(
+      'find_user_id_by_email',
+      { p_email: email },
+    )
+    if (lookupErr) {
+      console.error('[munchor/login] email lookup failed:', lookupErr)
+      return NextResponse.json({ error: 'Could not complete sign-in' }, { status: 500 })
+    }
+
+    if (existingUserId) {
+      // Typing the code Munchor emailed to this address IS proof of the
+      // mailbox — the same proof our own magic link would give — so link now.
+      if (mailboxProvenNow) return linkAndSignIn(existingUserId as string, email, munchorUser)
+      // Otherwise never merge without proof of ownership (the whole point:
+      // anyone who could register a Munchor account under someone else's
+      // address must not walk into that person's HapiEats account).
+      return requestLinkConfirmation(existingUserId as string, withEmail, next)
+    }
+
+    // ── 4. Nobody here yet — create the HapiEats account ───────────────────
+    const created = await createHapieatsAccount(munchorUser, email, emailTrusted)
+    if (!created.ok) {
+      return NextResponse.json({ error: 'Could not create a HapiEats account' }, { status: 500 })
+    }
+
+    // ── 5. An unverified address is not evidence of ownership ──────────────
+    if (!emailTrusted) return requestLinkConfirmation(created.id, withEmail, next)
+
+    // ── 6. Verified and unclaimed — link and sign in ───────────────────────
+    return linkAndSignIn(created.id, email, munchorUser, { created: true })
   }
 
-  const next = typeof body.next === 'string' && body.next.startsWith('/') ? body.next : '/dashboard'
-
-  if (existingUserId) {
-    // Case 3 — never merge without proof of ownership.
-    return requestLinkConfirmation(existingUserId as string, munchorUser, next)
+  // ── 7. Phone sign-in, and Munchor holds no usable email for this person ──
+  // The number was just proven by the texted code. The HapiEats account gets a
+  // private placeholder address tied to this Munchor id (nothing is sent to it).
+  if (proof !== 'phone_code') {
+    return NextResponse.json({ error: 'Could not complete sign-in' }, { status: 409 })
   }
+  const placeholder = phoneOnlyEmail(munchorUser.id)
+  const { data: priorId } = await service.rpc('find_user_id_by_email', { p_email: placeholder })
+  if (priorId) return linkAndSignIn(priorId as string, placeholder, munchorUser)
 
-  // ── 4. Nobody here yet — create the HapiEats account ─────────────────────
-  // Whether they get signed straight in depends on whether Munchor verified
-  // the address; that check happens after the account exists, because an
-  // unconfirmed user still needs a row to attach the confirmation to.
-  const username = await pickAvailableUsername(service, usernameFromMunchor(munchorUser))
-
-  const { data: created, error: createErr } = await service.auth.admin.createUser({
-    email: munchorUser.email,
-    email_confirm: munchorUser.emailConfirmed,
-    user_metadata: {
-      full_name: munchorUser.displayName ?? undefined,
-      avatar_url: munchorUser.avatarUrl ?? undefined,
-      username,
-      provider: 'munchor',
-    },
-  })
-
-  if (createErr || !created?.user) {
-    console.error('[munchor/login] createUser failed:', createErr?.message)
+  const created = await createHapieatsAccount(munchorUser, placeholder, true)
+  if (!created.ok) {
     return NextResponse.json({ error: 'Could not create a HapiEats account' }, { status: 500 })
   }
-  const newUserId = created.user.id
-
-  // Profile row — the handle_new_user trigger may already have made one.
-  const { data: hasProfile } = await service
-    .from('profiles')
-    .select('id')
-    .eq('id', newUserId)
-    .maybeSingle()
-
-  if (!hasProfile) {
-    const { error: profileErr } = await service.from('profiles').insert({
-      id: newUserId,
-      username,
-      display_name: munchorUser.displayName ?? username,
-      avatar_url: munchorUser.avatarUrl,
-      role: 'user',
-    })
-    // A duplicate here means the trigger won the race — harmless.
-    if (profileErr && (profileErr as { code?: string }).code !== '23505') {
-      console.error('[munchor/login] profile insert failed:', profileErr)
-    }
-  }
-
-  // ── 5. Munchor never verified this address ───────────────────────────────
-  // An unverified address is not evidence of ownership, so require the same
-  // magic-link round trip even though there was no pre-existing account.
-  if (!munchorUser.emailConfirmed) {
-    return requestLinkConfirmation(newUserId, munchorUser, next)
-  }
-
-  // ── 6. Verified and unclaimed — link and sign in ─────────────────────────
-
-  const { error: linkErr } = await service.from('munchor_identities').insert({
-    hapieats_user_id: newUserId,
-    munchor_user_id: munchorUser.id,
-    munchor_email: munchorUser.email,
-    last_login_at: new Date().toISOString(),
-  })
-  if (linkErr) {
-    console.error('[munchor/login] link insert failed:', linkErr)
-    return NextResponse.json({ error: 'Could not connect your Munchor account' }, { status: 500 })
-  }
-
-  const session = await signInAs(munchorUser.email)
-  if (!session.ok) return NextResponse.json({ error: session.error }, { status: 500 })
-
-  return NextResponse.json({ status: 'signed_in', created: true })
+  return linkAndSignIn(created.id, placeholder, munchorUser, { created: true })
 }

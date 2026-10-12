@@ -17,9 +17,12 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 export interface MunchorUser {
   id: string
-  email: string
+  /** Lower-cased. Null for Munchor accounts created with a phone number only. */
+  email: string | null
   /** Whether Munchor itself has verified this address. */
   emailConfirmed: boolean
+  /** E.164, as Munchor stores it (without the leading +). Null when none. */
+  phone: string | null
   displayName: string | null
   avatarUrl: string | null
 }
@@ -185,6 +188,60 @@ export type MunchorAuthResult =
   | { ok: true; user: MunchorUser }
   | { ok: false; reason: 'invalid_credentials' | 'not_configured' | 'error' }
 
+/** Where a one-time code is sent: an email address or an E.164 phone number. */
+export type MunchorCodeTarget = { email: string } | { phone: string }
+
+type SupabaseAuthUser = {
+  id: string
+  email?: string | null
+  email_confirmed_at?: string | null
+  phone?: string | null
+  user_metadata?: Record<string, unknown> | null
+}
+
+/** Map a Munchor auth user onto the shape HapiEats works with. */
+function toMunchorUser(u: SupabaseAuthUser): MunchorUser {
+  const meta = (u.user_metadata ?? {}) as Record<string, unknown>
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
+  return {
+    id: u.id,
+    email: u.email ? u.email.toLowerCase() : null,
+    emailConfirmed: Boolean(u.email && u.email_confirmed_at),
+    phone: u.phone ? u.phone : null,
+    displayName:
+      str(meta.full_name) ?? str(meta.display_name) ?? str(meta.name) ?? str(meta.username),
+    avatarUrl: str(meta.avatar_url) ?? str(meta.picture),
+  }
+}
+
+/**
+ * Best-effort E.164, matching Munchor's own login (src/lib/phone.ts there):
+ * keeps an explicit +country code, assumes US/Canada for a bare 10-digit
+ * number. Returns null when it cannot be sure, so a code is never texted to a
+ * guess.
+ */
+export function toE164(raw: string): string | null {
+  const trimmed = raw.trim()
+  const digits = trimmed.replace(/[^\d]/g, '')
+  if (trimmed.startsWith('+')) return digits.length >= 8 ? `+${digits}` : null
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return null
+}
+
+/** Discard a Munchor session we only needed long enough to learn who the user is. */
+async function dropMunchorSession(
+  munchor: ReturnType<typeof munchorClient>,
+  accessToken?: string,
+): Promise<void> {
+  try {
+    if (accessToken) await munchor.auth.admin.signOut(accessToken, 'local')
+    else await munchor.auth.signOut()
+  } catch {
+    /* best-effort; nothing is persisted on our side anyway */
+  }
+}
+
 /**
  * Verify an email/password pair against Munchor.
  *
@@ -200,46 +257,128 @@ export async function authenticateWithMunchor(
   if (!config) return { ok: false, reason: 'not_configured' }
 
   const munchor = munchorClient(config)
-
-  let data
   try {
     const res = await munchor.auth.signInWithPassword({ email, password })
     if (res.error || !res.data?.user) return { ok: false, reason: 'invalid_credentials' }
-    data = res.data
+    await dropMunchorSession(munchor)
+    return { ok: true, user: toMunchorUser(res.data.user) }
   } catch (err) {
-    console.error('[munchor] sign-in request failed:', err)
+    console.error('[munchor] password sign-in request failed:', err)
+    return { ok: false, reason: 'error' }
+  }
+}
+
+/**
+ * Verify a username/password pair, the way Munchor's own login does.
+ *
+ * Munchor resolves usernames server-side in its `username-login` edge function
+ * (so it never discloses which emails exist) and returns a session. We read the
+ * user from that session and then revoke it.
+ */
+export async function authenticateWithMunchorUsername(
+  username: string,
+  password: string,
+): Promise<MunchorAuthResult> {
+  const config = await getMunchorConfig()
+  if (!config) return { ok: false, reason: 'not_configured' }
+
+  let accessToken: string | undefined
+  try {
+    const res = await fetch(`${config.url}/functions/v1/username-login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+      },
+      body: JSON.stringify({ username, password }),
+      cache: 'no-store',
+    })
+    const data = (await res.json().catch(() => ({}))) as { access_token?: string }
+    if (res.status >= 500) {
+      console.error('[munchor] username-login failed with status', res.status)
+      return { ok: false, reason: 'error' }
+    }
+    if (!res.ok || !data.access_token) return { ok: false, reason: 'invalid_credentials' }
+    accessToken = data.access_token
+  } catch (err) {
+    console.error('[munchor] username-login request failed:', err)
     return { ok: false, reason: 'error' }
   }
 
-  const u = data.user
-  const meta = (u.user_metadata ?? {}) as Record<string, unknown>
-
-  // Drop the Munchor session immediately — we do not keep it.
+  const munchor = munchorClient(config)
   try {
-    await munchor.auth.signOut()
-  } catch {
-    /* best-effort; the client is not persisted anyway */
+    const { data, error } = await munchor.auth.getUser(accessToken)
+    if (error || !data?.user) return { ok: false, reason: 'error' }
+    return { ok: true, user: toMunchorUser(data.user) }
+  } catch (err) {
+    console.error('[munchor] could not read the user behind a username sign-in:', err)
+    return { ok: false, reason: 'error' }
+  } finally {
+    await dropMunchorSession(munchor, accessToken)
   }
+}
 
-  if (!u.email) return { ok: false, reason: 'error' }
+export type MunchorSendCodeResult =
+  | { ok: true }
+  | { ok: false; reason: 'not_configured' | 'rate_limited' | 'error'; message?: string }
 
-  return {
-    ok: true,
-    user: {
-      id: u.id,
-      email: u.email.toLowerCase(),
-      emailConfirmed: Boolean(u.email_confirmed_at),
-      displayName:
-        (typeof meta.full_name === 'string' && meta.full_name) ||
-        (typeof meta.display_name === 'string' && meta.display_name) ||
-        (typeof meta.name === 'string' && meta.name) ||
-        (typeof meta.username === 'string' && meta.username) ||
-        null,
-      avatarUrl:
-        (typeof meta.avatar_url === 'string' && meta.avatar_url) ||
-        (typeof meta.picture === 'string' && meta.picture) ||
-        null,
-    },
+/**
+ * Ask Munchor to email or text a 6-digit sign-in code — the same code its own
+ * app uses for "email me a code" and phone login.
+ *
+ * `shouldCreateUser: false`: this is sign-in only. HapiEats must never create
+ * Munchor accounts. An unknown address or number is reported as success so this
+ * endpoint cannot be used to discover who has a Munchor account.
+ */
+export async function sendMunchorCode(target: MunchorCodeTarget): Promise<MunchorSendCodeResult> {
+  const config = await getMunchorConfig()
+  if (!config) return { ok: false, reason: 'not_configured' }
+
+  const munchor = munchorClient(config)
+  try {
+    const { error } = await munchor.auth.signInWithOtp({
+      ...target,
+      options: { shouldCreateUser: false },
+    })
+    if (!error) return { ok: true }
+
+    const code = (error as { code?: string }).code ?? ''
+    const status = (error as { status?: number }).status ?? 0
+    if (code === 'otp_disabled' || /signups? not allowed|user not found/i.test(error.message)) {
+      return { ok: true } // unknown account — deliberately indistinguishable from success
+    }
+    if (status === 429 || /rate limit|too many|security purposes/i.test(error.message)) {
+      return { ok: false, reason: 'rate_limited', message: error.message }
+    }
+    console.error('[munchor] sending a sign-in code failed:', code, error.message)
+    return { ok: false, reason: 'error', message: error.message }
+  } catch (err) {
+    console.error('[munchor] sign-in code request failed:', err)
+    return { ok: false, reason: 'error' }
+  }
+}
+
+/** Check a 6-digit code from Munchor's email or text and return who it belongs to. */
+export async function verifyMunchorCode(
+  target: MunchorCodeTarget,
+  token: string,
+): Promise<MunchorAuthResult> {
+  const config = await getMunchorConfig()
+  if (!config) return { ok: false, reason: 'not_configured' }
+
+  const munchor = munchorClient(config)
+  try {
+    const { data, error } =
+      'email' in target
+        ? await munchor.auth.verifyOtp({ email: target.email, token, type: 'email' })
+        : await munchor.auth.verifyOtp({ phone: target.phone, token, type: 'sms' })
+    if (error || !data?.user) return { ok: false, reason: 'invalid_credentials' }
+    await dropMunchorSession(munchor, data.session?.access_token)
+    return { ok: true, user: toMunchorUser(data.user) }
+  } catch (err) {
+    console.error('[munchor] verifying a sign-in code failed:', err)
+    return { ok: false, reason: 'error' }
   }
 }
 
@@ -248,7 +387,7 @@ export async function authenticateWithMunchor(
  * Mirrors the sanitising done in /auth/callback so both paths agree.
  */
 export function usernameFromMunchor(user: MunchorUser): string {
-  const raw = user.displayName ?? user.email.split('@')[0] ?? ''
+  const raw = user.displayName ?? user.email?.split('@')[0] ?? ''
   const cleaned = raw.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24)
   // Fall back to something stable and collision-resistant if nothing survives.
   return cleaned.length >= 3 ? cleaned : `munchor_${user.id.slice(0, 8)}`
