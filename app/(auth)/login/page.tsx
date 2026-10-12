@@ -16,6 +16,8 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState<'password' | 'magic'>('password')
   const [magicSent, setMagicSent] = useState(false)
+  // While the Munchor panel is open the regular sign-in collapses out of the way.
+  const [munchorOpen, setMunchorOpen] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const rawRedirect = searchParams.get('redirect') ?? '/'
@@ -84,7 +86,12 @@ function LoginContent() {
             <span className="font-black text-2xl text-white">EATS</span>
             <span className="font-black text-2xl text-pink-500 italic ml-1">TV</span>
           </Link>
-          <p className="text-muted-foreground text-sm mt-2">Sign in to your account</p>
+          <p
+            key={munchorOpen ? 'munchor' : 'default'}
+            className="text-muted-foreground text-sm mt-2 animate-munchor-step motion-reduce:animate-none"
+          >
+            {munchorOpen ? 'Sign in with your Munchor account' : 'Sign in to your account'}
+          </p>
         </div>
 
         {/* Card */}
@@ -105,6 +112,20 @@ function LoginContent() {
               </button>
             </div>
           ) : (
+            <>
+            {/* The regular sign-in. Collapses (height, fade, lift) while the
+                Munchor panel is open so only one set of fields is on screen;
+                `inert` keeps its hidden inputs out of the tab order. */}
+            <div
+              className={`grid transition-[grid-template-rows,opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+                munchorOpen
+                  ? 'grid-rows-[0fr] opacity-0 -translate-y-3 pointer-events-none'
+                  : 'grid-rows-[1fr] opacity-100 translate-y-0'
+              }`}
+              aria-hidden={munchorOpen}
+              {...({ inert: munchorOpen ? '' : undefined } as Record<string, string | undefined>)}
+            >
+            <div className="overflow-hidden">
             <form onSubmit={mode === 'magic' ? handleMagicLink : handleLogin} className="space-y-5">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
@@ -162,13 +183,20 @@ function LoginContent() {
                 {mode === 'magic' ? 'Sign in with a password instead' : '✨ Sign in with a magic link (no password)'}
               </button>
 
-              <div className="relative py-1">
+            </form>
+
+              <div className="relative py-1 mt-5 mb-5">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
                 <div className="relative flex justify-center"><span className="bg-card px-2 text-[11px] text-muted-foreground">or</span></div>
               </div>
+            </div>
+            </div>
 
-              <MunchorSignIn redirect={redirect} />
-            </form>
+            {/* Outside the form above: a <form> nested in a <form> is invalid
+                HTML, and the browser submitted the outer one (reloading /login)
+                when "Text me a code" was pressed. */}
+            <MunchorSignIn redirect={redirect} onOpenChange={setMunchorOpen} />
+            </>
           )}
         </div>
 

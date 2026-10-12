@@ -78,10 +78,31 @@ const config: Config = {
           from: { height: 'var(--radix-accordion-content-height)' },
           to: { height: '0' },
         },
+        // Munchor sign-in panel
+        'munchor-in': {
+          from: { opacity: '0', transform: 'translateY(14px) scale(0.98)' },
+          to: { opacity: '1', transform: 'none' },
+        },
+        'munchor-step': {
+          from: { opacity: '0', transform: 'translateX(14px)' },
+          to: { opacity: '1', transform: 'none' },
+        },
+        'munchor-flow': {
+          from: { strokeDashoffset: '24' },
+          to: { strokeDashoffset: '0' },
+        },
+        'munchor-sheen': {
+          from: { backgroundPosition: '0% 50%' },
+          to: { backgroundPosition: '200% 50%' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        'munchor-in': 'munchor-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both',
+        'munchor-step': 'munchor-step 0.28s ease-out both',
+        'munchor-flow': 'munchor-flow 0.9s linear infinite',
+        'munchor-sheen': 'munchor-sheen 3s linear infinite',
       },
     },
   },
