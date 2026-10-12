@@ -64,21 +64,65 @@ export interface MunchorConfig {
   source: 'env' | 'database'
 }
 
-/** Read the `munchor_sso` settings row, if present. */
-async function configFromDatabase(): Promise<{ url: string | null; key: string | null }> {
+/** The HapiEats Supabase project ref this deployment talks to. Public — it ships in the client bundle. */
+function supabaseRef(): string {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').hostname.split('.')[0] || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+interface DatabaseConfig {
+  url: string | null
+  key: string | null
+  /** Why the row could not be read, or whether it was absent. Never contains values. */
+  diagnosis: string | null
+}
+
+/**
+ * Read the `munchor_sso` settings row, if present.
+ *
+ * supabase-js reports query failures in `error` rather than throwing, so a
+ * rejected service key or a blocked read used to come back as "no row" with
+ * nothing logged. Surface the error so the status endpoint can say why.
+ */
+async function configFromDatabase(): Promise<DatabaseConfig> {
   try {
     const { createServiceClient } = await import('@/lib/supabase/server')
-    const { data } = await createServiceClient()
+    const { data, error } = await createServiceClient()
       .from('platform_settings')
       .select('value')
       .eq('key', 'munchor_sso')
       .maybeSingle()
 
-    const v = (data?.value ?? null) as { url?: string; anon_key?: string } | null
-    return { url: normalizeUrl(v?.url), key: normalizeKey(v?.anon_key) }
+    if (error) {
+      console.error('[munchor] could not read munchor_sso from platform_settings:', error)
+      return {
+        url: null,
+        key: null,
+        diagnosis: `munchor_sso row could not be read (${error.code ?? 'no code'}: ${error.message})`,
+      }
+    }
+    if (!data) {
+      return {
+        url: null,
+        key: null,
+        diagnosis:
+          `munchor_sso row not found in project ${supabaseRef()} — ` +
+          'either it is not there, or SUPABASE_SERVICE_ROLE_KEY belongs to another project',
+      }
+    }
+
+    const v = (data.value ?? null) as { url?: string; anon_key?: string } | null
+    return { url: normalizeUrl(v?.url), key: normalizeKey(v?.anon_key), diagnosis: null }
   } catch (err) {
     console.error('[munchor] could not read munchor_sso from platform_settings:', err)
-    return { url: null, key: null }
+    return {
+      url: null,
+      key: null,
+      diagnosis: `munchor_sso row could not be read (${err instanceof Error ? err.message : 'unknown error'})`,
+    }
   }
 }
 
@@ -110,6 +154,7 @@ export async function munchorConfigProblems(): Promise<string[]> {
   if (db.url && db.key) return []
 
   const problems: string[] = []
+  if (db.diagnosis) problems.push(db.diagnosis)
   const rawEnvUrl = process.env.MUNCHOR_SUPABASE_URL?.trim()
   const rawEnvKey = process.env.MUNCHOR_SUPABASE_ANON_KEY?.trim()
 
