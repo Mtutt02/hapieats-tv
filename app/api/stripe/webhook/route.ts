@@ -184,6 +184,30 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Academy program enrollment.
+      // /api/academy/programs/[programId]/enroll creates this checkout and
+      // relies on the webhook to grant access — without this branch the
+      // payment succeeded and the learner was never enrolled.
+      if (checkoutMode === 'program_enrollment' && userId) {
+        const programId = session.metadata?.programId ?? ''
+        if (programId) {
+          // program_enrollments is (program_id, user_id, status, ...) with a
+          // UNIQUE(program_id, user_id); there is no price/session column, so
+          // this mirrors the free-enrollment path exactly.
+          const { error: enrollErr } = await supabase
+            .from('program_enrollments')
+            .upsert(
+              { program_id: programId, user_id: userId, status: 'active' },
+              { onConflict: 'program_id,user_id', ignoreDuplicates: true },
+            )
+          if (enrollErr) {
+            console.error('[webhook] program_enrollment upsert error:', enrollErr)
+          }
+        } else {
+          console.error('[webhook] program_enrollment with no programId in metadata', session.id)
+        }
+      }
+
       // Flavor Points purchase — credit flavor wallet
       if (checkoutMode === 'flavor_purchase' && userId) {
         const pointsAmount = parseInt(session.metadata?.pointsAmount ?? '0', 10)

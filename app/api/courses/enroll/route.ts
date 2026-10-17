@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     // Fetch course (must be published)
     const { data: course, error: courseErr } = await supabase
       .from('courses')
-      .select('id, title, pricing_model, price_usd, stripe_price_id, creator_id, enrollment_count')
+      .select('id, title, pricing_model, price, price_usd, stripe_price_id, creator_id, enrollment_count')
       .eq('id', courseId)
       .eq('status', 'published')
       .single()
@@ -64,6 +64,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ enrolled: true })
     }
 
+    // Resolve the price.
+    // `courses` carries BOTH `price` (written by the Academy builder) and the
+    // legacy `price_usd` (written by /api/courses/create). The academy
+    // migration backfilled one from the other once, and nothing keeps them in
+    // sync since — so a course priced in the Academy builder has price_usd
+    // NULL, and billing price_usd here would charge $0 for a paid course.
+    // Prefer whichever is actually set.
+    const priceUsd = Number(course.price ?? 0) || Number(course.price_usd ?? 0)
+
+    if (!priceUsd || priceUsd <= 0) {
+      // Marked paid but carrying no usable price — refuse rather than selling
+      // it for nothing.
+      console.error('[courses/enroll] paid course has no price', {
+        courseId, price: course.price, price_usd: course.price_usd,
+      })
+      return NextResponse.json(
+        { error: 'This course is not available for purchase yet' },
+        { status: 409 },
+      )
+    }
+
     // Paid course — create Stripe checkout
     const key = process.env.STRIPE_SECRET_KEY ?? ''
     if (!key || key.length < 20 || key.includes('placeholder')) {
@@ -107,7 +128,7 @@ export async function POST(req: NextRequest) {
       line_items: [{
         price_data: {
           currency: 'usd',
-          unit_amount: Math.round((course.price_usd ?? 0) * 100),
+          unit_amount: Math.round(priceUsd * 100),
           product_data: {
             name: course.title,
             description: 'HapiEats TV Course — Lifetime access',
@@ -119,7 +140,7 @@ export async function POST(req: NextRequest) {
         checkoutMode: 'course_enrollment',
         courseId,
         userId: user.id,
-        priceUsd: (course.price_usd ?? 0).toString(),
+        priceUsd: priceUsd.toString(),
       },
     })
 

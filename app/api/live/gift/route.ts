@@ -102,9 +102,14 @@ export async function POST(req: NextRequest) {
     .single()
   const rate           = (settings?.value as { creator_pct?: number; cents_per_token?: number } | null) ?? {}
   const centsPerToken  = rate.cents_per_token ?? 1
-  const creatorCents   = Math.floor(totalTokens * centsPerToken * (gift.creator_pct  / 100))
-  const platformCents  = Math.floor(totalTokens * centsPerToken * (gift.platform_pct / 100))
-  const circleCents    = Math.floor(totalTokens * centsPerToken * (gift.circle_pct   / 100))
+  // Flooring all three shares independently loses the remainder: at a 70/20/10
+  // split a 25-token gift credits 17+5+2 = 24 of 25 cents, and a 1-token gift
+  // credits nobody at all. Floor the first two and give the remainder to the
+  // circle pool so the three shares always sum to exactly what was debited.
+  const totalCents     = Math.round(totalTokens * centsPerToken)
+  const creatorCents   = Math.floor(totalCents * (gift.creator_pct  / 100))
+  const platformCents  = Math.floor(totalCents * (gift.platform_pct / 100))
+  const circleCents    = totalCents - creatorCents - platformCents
 
   // ── Record gift transaction ────────────────────────────────────────────────
   const { data: txn } = await service

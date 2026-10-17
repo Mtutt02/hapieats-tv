@@ -51,7 +51,11 @@ export async function POST(req: NextRequest) {
         category: body.category || null,
         level,
         pricing_model: pricingModel,
+        // Write BOTH price columns. The Academy builder reads `price` and
+        // this older flow reads `price_usd`; nothing syncs them, so a course
+        // created here would otherwise be priced $0 in the Academy.
         price_usd: priceUsd,
+        price: priceUsd,
         what_you_learn: whatYouLearn.length ? whatYouLearn : null,
         status: 'draft',
         enrollment_count: 0,

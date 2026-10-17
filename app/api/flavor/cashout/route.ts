@@ -115,12 +115,26 @@ export async function POST() {
     return NextResponse.json({ error: 'Failed to create cashout request' }, { status: 500 })
   }
 
-  // Mark earnings as cashed out
-  const earnigIds = earnings.map(e => e.id)
-  await serviceClient
+  // Mark earnings as cashed out.
+  // This MUST be checked: if it silently fails, the request exists while the
+  // earnings stay 'pending'. The duplicate guard above only blocks while a
+  // request is still pending, so once an admin marks this one paid the same
+  // earnings would be summed and paid out a second time. On failure, remove
+  // the request we just created so the creator is left exactly as before.
+  const earningIds = earnings.map(e => e.id)
+  const { error: markErr } = await serviceClient
     .from('creator_flavor_earnings')
     .update({ status: 'cashed_out', cashout_id: cashoutReq.id })
-    .in('id', earnigIds)
+    .in('id', earningIds)
+
+  if (markErr) {
+    console.error('[flavor/cashout] could not mark earnings cashed out:', markErr)
+    await serviceClient.from('flavor_cashout_requests').delete().eq('id', cashoutReq.id)
+    return NextResponse.json(
+      { error: 'Could not complete the cashout — please try again' },
+      { status: 500 },
+    )
+  }
 
   // Auto-repay outstanding credit loans from this cashout
   let loanDeducted = 0
