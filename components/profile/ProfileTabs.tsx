@@ -9,7 +9,7 @@ import { type ProfileClip } from '@/components/profile/ClipsGrid'
 import ClipsGrid from '@/components/profile/ClipsGrid'
 import { type ProfileData } from '@/components/profile/ProfileHero'
 import FlavorProfileCard from '@/components/profile/FlavorProfileCard'
-import CreatorGoalThermometer from '@/components/profile/CreatorGoalThermometer'
+import CreatorGoalThermometer, { type GoalData } from '@/components/profile/CreatorGoalThermometer'
 import { formatViews } from '@/lib/utils'
 import type { Video } from '@/types'
 
@@ -29,7 +29,9 @@ interface ProfileTabsProps {
     subscriber_count: number | null
     description: string | null
   }>
-  goals?: any[]
+  goals?: GoalData[]
+  /** True when the signed-in viewer owns this profile. */
+  isOwner?: boolean
 }
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -41,7 +43,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'about', label: 'About', icon: <Info className="h-4 w-4" /> },
 ]
 
-export default function ProfileTabs({ profile, videos, clips, channels, goals = [] }: ProfileTabsProps) {
+export default function ProfileTabs({ profile, videos, clips, channels, goals = [], isOwner = false }: ProfileTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>('videos')
 
   return (
@@ -176,7 +178,7 @@ export default function ProfileTabs({ profile, videos, clips, channels, goals = 
       {/* ── Goals Tab ──────────────────────────────────────────── */}
       {activeTab === 'goals' && (
         <section>
-          <CreatorGoalThermometer goals={goals} creatorName={profile.displayName ?? profile.username} />
+          <CreatorGoalThermometer goals={goals} creatorName={profile.displayName ?? profile.username} isOwner={isOwner} />
         </section>
       )}
 

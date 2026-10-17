@@ -213,6 +213,7 @@ export default async function ProfileV3Page({ params }: Props) {
           clips={clips}
           channels={(channels ?? []) as any[]}
           goals={goals}
+          isOwner={user?.id === profile.id}
         />
       </main>
     </AppShell>
