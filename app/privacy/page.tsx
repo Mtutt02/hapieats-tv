@@ -76,7 +76,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">8. Your Rights</h2>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong className="text-foreground">Access &amp; portability:</strong> Request a copy or machine-readable export of your data by emailing <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>.</li>
+              <li><strong className="text-foreground">Access &amp; portability:</strong> Request a copy or machine-readable export of your data by emailing <a href="mailto:privacy@melivate.com" className="text-primary hover:underline">privacy@melivate.com</a>.</li>
               <li><strong className="text-foreground">Correction:</strong> Update your profile and account data anytime in Settings.</li>
               <li><strong className="text-foreground">Deletion:</strong> Delete your account directly in the app at <strong className="text-foreground">Settings → Account → Delete account</strong>, or email us to request deletion.</li>
               <li><strong className="text-foreground">Objection &amp; restriction:</strong> Object to or ask us to restrict processing based on legitimate interests.</li>
