@@ -11,13 +11,13 @@ export default function CookiesPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">Cookie Policy</h1>
-        <p className="text-muted-foreground mb-10">Last updated: July 8, 2026</p>
+        <p className="text-muted-foreground mb-10">Last updated: October 21, 2026</p>
 
         <div className="space-y-8 text-muted-foreground leading-relaxed">
 
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">1. What This Policy Covers</h2>
-            <p>This policy explains how [HapiEats TV, LLC — update with your registered legal entity and address] ("HapiEats TV", "we") uses cookies and similar technologies (localStorage, session storage, and SDK-level identifiers) on hapieatstv.com. It supplements our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>. A cookie is a small text file stored on your device that lets a website remember you between page loads.</p>
+            <p>This policy explains how Melivate Group, 712 H St NE, Washington, DC 20002 ("HapiEats TV", "we") uses cookies and similar technologies (localStorage, session storage, and SDK-level identifiers) on hapieatstv.com. It supplements our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>. A cookie is a small text file stored on your device that lets a website remember you between page loads.</p>
           </section>
 
           <section>

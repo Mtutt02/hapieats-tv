@@ -11,13 +11,13 @@ export default function PrivacyPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-        <p className="text-muted-foreground mb-10">Last updated: July 8, 2026</p>
+        <p className="text-muted-foreground mb-10">Last updated: October 21, 2026</p>
 
         <div className="space-y-8 text-muted-foreground leading-relaxed">
 
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">1. Who We Are</h2>
-            <p>HapiEats TV is a food video platform — on-demand videos, live streams with chat, a TV-style browser, virtual gifting with Hapi Tokens, creator subscriptions, cooking classes, and AI-assisted editing tools — operated by [HapiEats TV, LLC — update with your registered legal entity and address], the data controller for personal data described in this policy. Contact us at <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>.</p>
+            <p>HapiEats TV is a food video platform — on-demand videos, live streams with chat, a TV-style browser, virtual gifting with Hapi Tokens, creator subscriptions, cooking classes, and AI-assisted editing tools — operated by Melivate Group, 712 H St NE, Washington, DC 20002, the data controller for personal data described in this policy. Contact us at <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>.</p>
           </section>
 
           <section>
@@ -110,8 +110,9 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-semibold text-foreground mb-2">13. Contact</h2>
             <p>Privacy questions or requests:</p>
             <address className="not-italic mt-2">
-              <strong className="text-foreground">[HapiEats TV, LLC — update with your registered legal entity and address]</strong><br />
-              Email: <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>
+              <strong className="text-foreground">Melivate Group, 712 H St NE, Washington, DC 20002</strong><br />
+              Privacy requests: <a href="mailto:privacy@melivate.com" className="text-primary hover:underline">privacy@melivate.com</a><br />
+              General support: <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>
             </address>
           </section>
 
