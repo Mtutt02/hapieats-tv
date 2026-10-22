@@ -11,7 +11,7 @@ export default function DmcaPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">DMCA / Copyright Policy</h1>
-        <p className="text-muted-foreground mb-10">Last updated: July 8, 2026</p>
+        <p className="text-muted-foreground mb-10">Last updated: October 21, 2026</p>
 
         <div className="space-y-8 text-muted-foreground leading-relaxed">
 
@@ -56,8 +56,7 @@ export default function DmcaPage() {
             <p>Send notices and counter-notices to:</p>
             <address className="not-italic mt-2 border border-border rounded-lg p-4">
               <strong className="text-foreground">Copyright Agent</strong><br />
-              [HapiEats TV, LLC — update with your registered legal entity and address]<br />
-              [Agent name — register your designated agent with the U.S. Copyright Office at dmca.copyright.gov]<br />
+              Melivate Group, 712 H St NE, Washington, DC 20002<br />
               Email: <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a> (subject line: "DMCA Notice")
             </address>
             <p className="mt-2">Only copyright notices should be sent to this agent. For other issues — trademark complaints, privacy requests, or general support — contact <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a>.</p>

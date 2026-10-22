@@ -11,13 +11,13 @@ export default function TermsPage() {
     <AppShell>
       <main className="max-w-3xl mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold mb-2">Terms &amp; Conditions</h1>
-        <p className="text-muted-foreground mb-10">Last updated: July 12, 2026</p>
+        <p className="text-muted-foreground mb-10">Last updated: October 21, 2026</p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-muted-foreground leading-relaxed">
 
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">1. Agreement to These Terms</h2>
-            <p>These Terms &amp; Conditions ("Terms") are a binding agreement between you and [HapiEats TV, LLC — update with your registered legal entity and address] ("HapiEats TV", "we", "us", "our"), the operator of the HapiEats TV platform at hapieatstv.com, including video uploads, live streaming, live chat, the TV browser, Hapi Tokens, gifting, subscriptions, cooking classes and courses, and the HapiEats Studio editing tools (collectively, the "Platform"). By creating an account or using the Platform you accept these Terms. If you do not agree, do not use the Platform.</p>
+            <p>These Terms &amp; Conditions ("Terms") are a binding agreement between you and Melivate Group, 712 H St NE, Washington, DC 20002 ("HapiEats TV", "we", "us", "our"), the operator of the HapiEats TV platform at hapieatstv.com, including video uploads, live streaming, live chat, the TV browser, Hapi Tokens, gifting, subscriptions, cooking classes and courses, and the HapiEats Studio editing tools (collectively, the "Platform"). By creating an account or using the Platform you accept these Terms. If you do not agree, do not use the Platform.</p>
           </section>
 
           <section>
@@ -138,7 +138,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">15. Governing Law and Disputes</h2>
-            <p>These Terms are governed by the laws of [insert governing state/country — update with your registered legal entity's jurisdiction], without regard to conflict-of-law rules. Disputes will be resolved in the courts of, or by binding arbitration seated in, that jurisdiction, as determined by [HapiEats TV, LLC — update with your registered legal entity and address]. Nothing in this section limits any non-waivable consumer rights you hold under the mandatory laws of your country of residence.</p>
+            <p>These Terms are governed by the laws of the District of Columbia, without regard to conflict-of-law rules. Disputes will be resolved in the courts of, or by binding arbitration seated in, that jurisdiction, as determined by Melivate Group, 712 H St NE, Washington, DC 20002. Nothing in this section limits any non-waivable consumer rights you hold under the mandatory laws of your country of residence.</p>
           </section>
 
           <section>
@@ -148,7 +148,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-lg font-semibold text-foreground mb-2">17. Contact</h2>
-            <p>Questions about these Terms? Contact <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a> or write to [HapiEats TV, LLC — update with your registered legal entity and address]. See also our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>, <a href="/cookies" className="text-primary hover:underline">Cookie Policy</a>, and <a href="/dmca" className="text-primary hover:underline">DMCA / Copyright Policy</a>, each incorporated into these Terms by reference.</p>
+            <p>Questions about these Terms? Contact <a href="mailto:support@hapieatstv.com" className="text-primary hover:underline">support@hapieatstv.com</a> or write to Melivate Group, 712 H St NE, Washington, DC 20002. See also our <a href="/privacy" className="text-primary hover:underline">Privacy Policy</a>, <a href="/cookies" className="text-primary hover:underline">Cookie Policy</a>, and <a href="/dmca" className="text-primary hover:underline">DMCA / Copyright Policy</a>, each incorporated into these Terms by reference.</p>
           </section>
 
           <p className="italic text-sm">This document is a template and should be reviewed by qualified legal counsel before relying on it.</p>
