@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -12,8 +12,18 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [hasSession, setHasSession] = useState<boolean | null>(null)
   const router = useRouter()
   const supabase = createClient()
+
+  // The recovery link routes through /auth/callback, which establishes a
+  // session before landing here. If there's no session, the link was expired,
+  // already used, or opened directly — tell the user plainly.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setHasSession(!!data.session)
+    })
+  }, [supabase])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -49,6 +59,21 @@ export default function ResetPasswordPage() {
               <div className="text-4xl">✅</div>
               <h2 className="font-semibold">Password updated!</h2>
               <p className="text-sm text-muted-foreground">Redirecting you home…</p>
+            </div>
+          ) : hasSession === false ? (
+            <div className="text-center space-y-4">
+              <div className="text-4xl">⚠️</div>
+              <h2 className="font-semibold text-lg">This link isn&apos;t valid</h2>
+              <p className="text-sm text-muted-foreground">
+                Your password reset link has expired or was already used. Request a new one and it&apos;ll work right away.
+              </p>
+              <Link href="/forgot-password" className="inline-block py-2.5 px-4 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition">
+                Send a new reset link
+              </Link>
+            </div>
+          ) : hasSession === null ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-muted-foreground">Verifying your link…</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">

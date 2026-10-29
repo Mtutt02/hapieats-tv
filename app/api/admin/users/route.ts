@@ -75,6 +75,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, updated })
     }
 
+    case 'set_password': {
+      // Password resets are admin/superadmin only — not moderators (takeover risk).
+      // (Superadmin targets are already blocked by the guard above.)
+      if (!['admin', 'superadmin'].includes(admin.profile.role ?? '')) {
+        return NextResponse.json({ error: 'Only admins can reset passwords' }, { status: 403 })
+      }
+      // An admin must not be able to seize a peer admin's account; only a
+      // superadmin can reset an admin's password.
+      if (target?.role === 'admin' && admin.profile.role !== 'superadmin') {
+        return NextResponse.json({ error: "Only superadmin can reset an admin's password" }, { status: 403 })
+      }
+      const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
+      if (newPassword.length < 8) {
+        return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
+      }
+      const { error } = await service.auth.admin.updateUserById(userId, { password: newPassword })
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ success: true })
+    }
+
     case 'toggle_creator': {
       // Only superadmin can toggle creator status
       if (admin.profile.role !== 'superadmin') {

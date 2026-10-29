@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   description: 'Update your profile, channel branding, and pricing on HapiEats TV.',
 }
 import ChannelSettingsForm from '@/components/creator/ChannelSettingsForm'
+import ChangePasswordForm from '@/components/settings/ChangePasswordForm'
 import type { Profile, Channel } from '@/types'
 
 export default async function SettingsPage() {
@@ -81,6 +82,21 @@ export default async function SettingsPage() {
               </Link>
             </div>
           )}
+        </section>
+
+        <div className="border-t my-10" />
+
+        {/* Password */}
+        <section>
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold">Password</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Change your account password. You&apos;ll need your current password to confirm.
+            </p>
+          </div>
+          <div className="rounded-xl border bg-card p-6">
+            <ChangePasswordForm />
+          </div>
         </section>
       </main>
     </AppShell>
