@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { randomUUID } from 'crypto'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // Gift catalog — cost in points
 const GIFTS: Record<string, { name: string; emoji: string; pointsCost: number }> = {
@@ -21,6 +22,8 @@ const GIFTS: Record<string, { name: string; emoji: string; pointsCost: number }>
 const CREATOR_SHARE = 0.5
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

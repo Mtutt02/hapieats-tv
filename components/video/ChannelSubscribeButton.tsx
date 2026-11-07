@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Bell, BellOff } from 'lucide-react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 interface Channel {
   id: string
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export default function ChannelSubscribeButton({ channel, userId, isSubscribed: initial }: Props) {
+  const { paymentsPaused } = usePauseStatus()
   const [subscribed, setSubscribed] = useState(initial)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +66,7 @@ export default function ChannelSubscribeButton({ channel, userId, isSubscribed: 
 
   return (
     <div className="flex flex-col gap-1">
-      <Button onClick={handleSubscribe} disabled={loading} className="gap-2">
+      <Button onClick={handleSubscribe} disabled={loading || paymentsPaused} className="gap-2">
         <Bell className="h-4 w-4" />
         {loading ? 'Loading…' : 'Subscribe'}
         {!loading && channel.subscription_price && (

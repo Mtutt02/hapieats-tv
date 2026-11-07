@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,6 +50,9 @@ export async function POST(req: NextRequest, { params }: { params: { programId: 
     }
 
     // Paid — Stripe checkout (enrollment row is created by the webhook on completion).
+    // Free enrollment above is never paused.
+    const paused = paymentsPausedResponse()
+    if (paused) return paused
     const key = process.env.STRIPE_SECRET_KEY ?? ''
     if (!key || key.length < 20 || key.includes('placeholder')) {
       return NextResponse.json({ error: 'Payments are not configured yet — contact support' }, { status: 503 })

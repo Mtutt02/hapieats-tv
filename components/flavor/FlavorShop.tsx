@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Zap } from 'lucide-react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 const PACKAGES = [
   { id: 'starter_bite', name: 'Starter Bite',  points: 100,   priceUsd: 0.99,  tag: null,           emoji: '🍿' },
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export default function FlavorShop({ initialBalance = 0 }: Props) {
+  const { paymentsPaused } = usePauseStatus()
   const [balance, setBalance] = useState(initialBalance)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -107,7 +109,7 @@ export default function FlavorShop({ initialBalance = 0 }: Props) {
             <Button
               className="w-full gap-2 bg-cyan-500 hover:bg-cyan-400 text-black font-bold"
               onClick={() => handleBuy(pkg.id)}
-              disabled={loading === pkg.id}
+              disabled={loading === pkg.id || paymentsPaused}
             >
               <Zap className="h-4 w-4" />
               {loading === pkg.id ? 'Redirecting…' : `Buy ${pkg.points.toLocaleString()} pts`}

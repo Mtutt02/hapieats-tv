@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toaster'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import GlobalUploadToast from '@/components/upload/GlobalUploadToast'
+import { PauseBanner } from '@/components/PauseStatus'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -107,6 +108,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className={inter.className}>
+        <PauseBanner />
         {children}
         <GlobalUploadToast />
         <Toaster />

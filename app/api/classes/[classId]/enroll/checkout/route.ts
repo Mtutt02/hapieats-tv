@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { classId: string } }
 ) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const key = process.env.STRIPE_SECRET_KEY ?? ''
   if (!key || key.length < 20) {
     return NextResponse.json(

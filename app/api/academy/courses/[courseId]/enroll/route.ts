@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,6 +100,10 @@ export async function POST(req: NextRequest, { params }: { params: { courseId: s
         // Zero-priced "paid" course — just enroll
         return finalize('free', 0)
       }
+
+      // Free / zero-priced / Pro-included enrollments above are never paused; paying (tokens or card) is.
+      const paused = paymentsPausedResponse()
+      if (paused) return paused
 
       const method = body.method
       if (method !== 'tokens' && method !== 'stripe') {

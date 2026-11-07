@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Gift, Zap, Smile, X } from 'lucide-react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 interface LiveChatProps {
   streamId: string
@@ -95,6 +96,7 @@ export default function LiveChat({ streamId, userId, displayName, creatorId }: L
   const [showEmojiPicker, setShowEmojiPicker]     = useState(false)
   const [emojiTab, setEmojiTab]                   = useState(0)
   const [flavorBalance, setFlavorBalance]         = useState<number | null>(null)
+  const { paymentsPaused } = usePauseStatus()
   const [sendingGift, setSendingGift]             = useState<string | null>(null)
   const giftRequestIds = useRef<Record<string, string>>({}) // one id per gift tap; same tap = charged once
   const [giftAnim, setGiftAnim]                   = useState<ChatMessage | null>(null)
@@ -361,7 +363,7 @@ export default function LiveChat({ streamId, userId, displayName, creatorId }: L
                   <button
                     key={g.id}
                     onClick={() => sendGift(g)}
-                    disabled={sendingGift === g.id || !canAfford}
+                    disabled={sendingGift === g.id || !canAfford || paymentsPaused}
                     className={cn(
                       'flex flex-col items-center gap-0.5 p-2 rounded-lg border text-center transition-all',
                       !canAfford

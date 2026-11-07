@@ -25,6 +25,7 @@ import {
 } from '@/lib/credits'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { randomUUID } from 'crypto'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // Stripe only accepts expires_at between 30 minutes and 24 hours out. The shortest legal
 // window keeps credits tied up as briefly as possible: when the session expires without
@@ -36,6 +37,8 @@ const CHECKOUT_FAILED = {
 }
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

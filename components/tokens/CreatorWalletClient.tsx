@@ -7,6 +7,7 @@ import {
   ShieldCheck, Coins, Send,
 } from 'lucide-react'
 import Link from 'next/link'
+import { usePauseStatus, PausedNote } from '@/components/PauseStatus'
 
 interface CreatorWallet {
   creator_id: string
@@ -251,6 +252,7 @@ export default function CreatorWalletClient({
   wallet, streak, recentGifts, activeGoals, displayName,
   monetizationStatus: initialStatus, lifetimePurchased, autoUnlockThreshold, pendingRequest,
 }: Props) {
+  const { payoutsPaused } = usePauseStatus()
   const [monetizationStatus, setMonetizationStatus] = useState(initialStatus)
   const [payoutLoading, setPayoutLoading] = useState(false)
   const [claimingMilestone, setClaimingMilestone] = useState<string | null>(null)
@@ -407,13 +409,16 @@ export default function CreatorWalletClient({
             )}
           </div>
           {isUnlocked && wallet.payout_status !== 'pending' && (
+            <div className="shrink-0 flex flex-col items-end gap-1">
             <button
               onClick={requestPayout}
-              disabled={payoutLoading || wallet.redeemable_cents < 100}
+              disabled={payoutLoading || wallet.redeemable_cents < 100 || payoutsPaused}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             >
               {payoutLoading ? 'Requesting…' : `Cash Out ${formatCents(wallet.redeemable_cents)}`}
             </button>
+            <PausedNote kind="payouts" className="max-w-xs text-right" />
+            </div>
           )}
           {isUnlocked && wallet.payout_status === 'pending' && (
             <span className="flex items-center gap-1.5 text-sm text-yellow-400 font-medium shrink-0">

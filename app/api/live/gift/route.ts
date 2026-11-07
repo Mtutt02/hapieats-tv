@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // ── POST /api/live/gift ────────────────────────────────────────────────────────
 // Send a gift during a live stream.
@@ -19,6 +20,8 @@ import { checkRateLimit } from '@/lib/rate-limit'
 // Double-submit safety: the client sends a request_id per gift tap and reuses it for a retry.
 // The same (sender, request_id) is charged once; a replay returns the original result.
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

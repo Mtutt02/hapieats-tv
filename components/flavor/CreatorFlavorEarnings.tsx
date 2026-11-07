@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { TrendingUp, DollarSign, Clock, CheckCircle2 } from 'lucide-react'
+import { usePauseStatus, PausedNote } from '@/components/PauseStatus'
 
 interface CashoutData {
   pendingPoints: number
@@ -25,6 +26,7 @@ interface CashoutData {
 }
 
 export default function CreatorFlavorEarnings() {
+  const { payoutsPaused } = usePauseStatus()
   const [data, setData] = useState<CashoutData | null>(null)
   const [loading, setLoading] = useState(true)
   const [requesting, setRequesting] = useState(false)
@@ -143,13 +145,16 @@ export default function CreatorFlavorEarnings() {
             You have <strong>{data.pendingPoints.toLocaleString()} pts</strong> — need {(data.minPoints - data.pendingPoints).toLocaleString()} more.
           </div>
         ) : (
+          <>
           <Button
             className="w-full bg-green-600 hover:bg-green-500 text-white font-bold"
             onClick={handleCashout}
-            disabled={requesting}
+            disabled={requesting || payoutsPaused}
           >
             {requesting ? 'Submitting…' : `Request Payout — $${data.usdNet.toFixed(2)}`}
           </Button>
+          <PausedNote kind="payouts" className="mt-2" />
+          </>
         )}
 
         <p className="text-xs text-muted-foreground text-center">

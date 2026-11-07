@@ -30,6 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PRO_POOL_PCT, engagementCredits } from '@/lib/academy/types'
+import { payoutsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +45,8 @@ function lastMonth(): string {
 }
 
 export async function POST(req: NextRequest) {
+  const paused = payoutsPausedResponse()
+  if (paused) return paused
   const service = createServiceClient()
 
   // ── Auth gate: cron secret OR admin/superadmin session ──────────────────────

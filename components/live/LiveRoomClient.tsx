@@ -5,6 +5,7 @@ import MuxPlayer from '@mux/mux-player-react'
 import { createClient } from '@/lib/supabase/client'
 import { Send, Gift, Lock, StopCircle, Users, Radio, X, ChevronRight, UserX, Flag } from 'lucide-react'
 import Link from 'next/link'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,7 @@ export default function LiveRoomClient({
   const [sendingChat, setSendingChat]     = useState(false)
   const [showGifts, setShowGifts]         = useState(false)
   const [tokenBalance, setTokenBalance]   = useState(initialTokenBalance)
+  const { paymentsPaused } = usePauseStatus()
   const [sendingGift, setSendingGift]     = useState<string | null>(null)
   // One request id per gift tap, reused if the same tap is submitted again, so the server charges it once.
   const giftRequestIds = useRef<Record<string, string>>({})
@@ -596,7 +598,7 @@ export default function LiveRoomClient({
                     <button
                       key={gift.id}
                       onClick={() => sendGift(gift)}
-                      disabled={!!sendingGift || !canAfford}
+                      disabled={!!sendingGift || !canAfford || paymentsPaused}
                       className={[
                         'flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center',
                         canAfford && !sendingGift

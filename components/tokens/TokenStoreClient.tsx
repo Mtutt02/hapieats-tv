@@ -5,6 +5,7 @@ import { Coins, Zap, Star, Crown, Gift, Check, AlertCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useSearchParams } from 'next/navigation'
 import { useEffect } from 'react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 interface TokenPack {
   id: string
@@ -49,6 +50,7 @@ interface Props {
 }
 
 export default function TokenStoreClient({ packs, wallet: initialWallet, gifts }: Props) {
+  const { paymentsPaused } = usePauseStatus()
   const [wallet, setWallet] = useState(initialWallet)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -140,7 +142,7 @@ export default function TokenStoreClient({ packs, wallet: initialWallet, gifts }
               <button
                 key={pack.id}
                 onClick={() => buyPack(pack)}
-                disabled={!!loading}
+                disabled={!!loading || paymentsPaused}
                 className={`relative bg-card border ${borderColor} rounded-xl p-5 text-left transition-all duration-200 hover:bg-muted/30 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {pack.bonus_tokens > 0 && (

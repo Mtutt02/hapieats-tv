@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import AppShell from '@/components/layout/AppShell'
 import { ChevronDown, ChevronUp } from 'lucide-react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 interface CreditBalance {
   giftBalance: number
@@ -191,6 +192,7 @@ function CreditsPageInner() {
 
   const [data, setData] = useState<CreditBalance | null>(null)
   const [loading, setLoading] = useState(true)
+  const { paymentsPaused } = usePauseStatus()
   const [repaying, setRepaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [requests, setRequests] = useState<CreditRequest[]>([])
@@ -301,7 +303,7 @@ function CreditsPageInner() {
                   </div>
                   <button
                     onClick={handleRepay}
-                    disabled={repaying}
+                    disabled={repaying || paymentsPaused}
                     className="shrink-0 bg-amber-500 hover:bg-amber-400 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition disabled:opacity-50 whitespace-nowrap"
                   >
                     {repaying ? 'Redirecting…' : `Pay via Stripe`}

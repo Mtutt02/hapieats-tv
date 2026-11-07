@@ -16,10 +16,13 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { isProMember } from '@/lib/academy/pro'
 import { PRO_PRICE_USD } from '@/lib/academy/types'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: 'Payments not configured' }, { status: 503 })
   }

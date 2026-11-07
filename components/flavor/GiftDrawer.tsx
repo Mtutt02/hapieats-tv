@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Gift, X, Zap } from 'lucide-react'
 import Link from 'next/link'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 const GIFTS = [
   { id: 'sauce_drop',     name: 'Sauce Drop',     emoji: '🫙',  cost: 5     },
@@ -27,6 +28,7 @@ interface Props {
 export default function GiftDrawer({ streamId, creatorId, onGiftSent }: Props) {
   const [open, setOpen] = useState(false)
   const [balance, setBalance] = useState<number | null>(null)
+  const { paymentsPaused } = usePauseStatus()
   const [loading, setLoading] = useState<string | null>(null)
   const requestIds = useRef<Record<string, string>>({}) // one id per gift tap; same tap = charged once
   const [flash, setFlash] = useState<{ gift: typeof GIFTS[0]; type: 'success' | 'error'; msg: string } | null>(null)
@@ -131,7 +133,7 @@ export default function GiftDrawer({ streamId, creatorId, onGiftSent }: Props) {
                   <button
                     key={gift.id}
                     onClick={() => handleGift(gift)}
-                    disabled={loading === gift.id || !canAfford}
+                    disabled={loading === gift.id || !canAfford || paymentsPaused}
                     className={`flex flex-col items-center gap-1 p-2 rounded-xl border text-center transition-all
                       ${loading === gift.id ? 'opacity-50 cursor-wait' : ''}
                       ${canAfford

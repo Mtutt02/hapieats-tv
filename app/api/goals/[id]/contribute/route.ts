@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // Spends purchased tokens, so it follows the purchase pause.
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
