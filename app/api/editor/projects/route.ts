@@ -40,18 +40,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Project too large to sync' }, { status: 413 })
   }
 
+  // The service role bypasses RLS, so ownership is enforced here.
+  // 1) Update only a row this user owns. 2) Otherwise insert; the primary key
+  // rejects an id that belongs to another account (23505), so no one can
+  // overwrite or reassign someone else's project by guessing its id.
   const service = createServiceClient()
-  const { error } = await service
-    .from('editor_projects')
-    .upsert({
-      id: project.id,
-      user_id: user.id,
-      title: project.title.slice(0, 200),
-      data: project,
-      updated_at: new Date().toISOString(),
-    })
+  const title = project.title.slice(0, 200)
+  const now = new Date().toISOString()
 
-  if (error) {
+  const { data: updated, error: updateError } = await service
+    .from('editor_projects')
+    .update({ title, data: project, updated_at: now })
+    .eq('id', project.id)
+    .eq('user_id', user.id)
+    .select('id')
+
+  if (updateError) {
+    return NextResponse.json({ error: 'Cloud sync unavailable' }, { status: 503 })
+  }
+  if (updated && updated.length > 0) {
+    return NextResponse.json({ ok: true })
+  }
+
+  const { error: insertError } = await service
+    .from('editor_projects')
+    .insert({ id: project.id, user_id: user.id, title, data: project, updated_at: now })
+
+  if (insertError?.code === '23505') {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+  if (insertError) {
     return NextResponse.json({ error: 'Cloud sync unavailable' }, { status: 503 })
   }
   return NextResponse.json({ ok: true })

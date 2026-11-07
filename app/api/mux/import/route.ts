@@ -54,6 +54,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // A playback ID that is already on the platform belongs to whoever uploaded it.
+    // Re-importing it would republish their video under this account.
+    const { data: existingPlayback } = await serviceClient
+      .from('videos')
+      .select('id')
+      .eq('mux_playback_id', playbackId)
+      .maybeSingle()
+    if (existingPlayback) {
+      return NextResponse.json({ error: 'This video is already on HapiEats TV' }, { status: 409 })
+    }
+
     const { data: videoRecord, error } = await serviceClient
       .from('videos')
       .insert({

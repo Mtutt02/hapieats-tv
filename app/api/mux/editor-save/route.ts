@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { CLIP_CATEGORIES } from '@/lib/clips/types'
 import { insertVideoTolerant } from '@/lib/videos/tolerant-insert'
+import { DAILY_UPLOAD_QUOTA, dailyUploadCount, uploadBelongsToUser } from '@/lib/mux-upload-guard'
 
 /**
  * POST /api/mux/editor-save
@@ -35,6 +36,23 @@ export async function POST(req: NextRequest) {
     }
 
     const service = createServiceClient()
+
+    // The upload must have been issued to this user (see /api/mux/direct-upload),
+    // and not already saved as someone's video.
+    if (!(await uploadBelongsToUser(uploadId, user.id))) {
+      return NextResponse.json({ error: 'Upload not found' }, { status: 404 })
+    }
+    const { data: existingUpload } = await service
+      .from('videos')
+      .select('id')
+      .eq('mux_upload_id', uploadId)
+      .maybeSingle()
+    if (existingUpload) {
+      return NextResponse.json({ error: 'Upload already saved' }, { status: 409 })
+    }
+    if ((await dailyUploadCount(service, user.id)) >= DAILY_UPLOAD_QUOTA) {
+      return NextResponse.json({ error: 'Daily upload limit reached. Try again tomorrow.' }, { status: 429 })
+    }
 
     // If channelId provided, verify ownership
     if (channelId) {
