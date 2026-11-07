@@ -11,28 +11,31 @@
  * Month: body.month ('YYYY-MM') or, by default, last calendar month.
  *
  * Economics (all integer cents):
- *   gross_cents = (# active Pro subs that month) * PRO_PRICE_USD * 100
- *     ASSUMPTION: bills one full month per currently-active/trialing sub.
- *     This is an approximation — it does not prorate mid-month starts,
- *     cancellations, or failed invoices. Treat as an estimate of net Pro
- *     revenue for the pool. A future version should read actual Stripe
- *     invoices for the period.
+ *   gross_cents = sum over that month's pro_revenue_ledger rows of
+ *     (amount collected - amount refunded). The ledger is written by the Stripe
+ *     webhook from real paid Pro invoices (invoice.paid / charge.refunded), so
+ *     the pool is never an estimate from subscriber count x list price.
  *   pool_cents = round(gross_cents * PRO_POOL_PCT)
  *   Each creator's share = floor(pool_cents * creatorCredits / totalCredits),
  *     where credits come from academy_engagement rows with month=month AND
  *     via_pro=true, scored by engagementCredits(minutes, completed).
  *
- * Idempotency: if pro_payout_pool[month].distributed is already true, we skip
- * and return { skipped: true }. We only credit creator_wallets after writing
- * the pool row as distributed-in-progress, and each pro_pool_earnings row is
- * upserted on (creator_id, month) so a retry never double-credits.
+ * Atomicity / idempotency: the credit of every creator wallet, the earnings rows
+ * and the pool's distributed flag are written by ONE SQL function
+ * (run_pro_payout), in one transaction, under a row lock on the pool. A failure
+ * commits nothing; a re-run, or a concurrent run, of a distributed month is a
+ * no-op. Months that are not finished yet are refused.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { PRO_PRICE_USD, PRO_POOL_PCT, engagementCredits } from '@/lib/academy/types'
+import { PRO_POOL_PCT, engagementCredits } from '@/lib/academy/types'
 
 export const dynamic = 'force-dynamic'
+
+function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7) // 'YYYY-MM' (UTC)
+}
 
 function lastMonth(): string {
   const now = new Date()
@@ -67,25 +70,36 @@ export async function POST(req: NextRequest) {
     ? body.month
     : lastMonth()
 
+  // The ledger for a month is only complete once the month is over.
+  if (month >= currentMonth()) {
+    return NextResponse.json({ error: 'That month is not finished yet', month }, { status: 400 })
+  }
+
   // ── Idempotency: never distribute a month twice ─────────────────────────────
   const { data: existingPool } = await service
     .from('pro_payout_pool')
     .select('month, distributed')
     .eq('month', month)
-    .single()
+    .maybeSingle()
 
   if (existingPool?.distributed) {
     return NextResponse.json({ skipped: true, reason: 'already distributed', month })
   }
 
-  // ── Gross: active Pro subs for the month (approximation, see header) ─────────
-  const { count: subCount } = await service
-    .from('pro_subscriptions')
-    .select('id', { count: 'exact', head: true })
-    .in('status', ['active', 'trialing'])
-
-  const activeSubs = subCount ?? 0
-  const grossCents = Math.round(activeSubs * PRO_PRICE_USD * 100)
+  // ── Gross: Pro invoices Stripe actually collected that month, net of refunds ─
+  const { data: revenue, error: revErr } = await service
+    .from('pro_revenue_ledger')
+    .select('amount_cents, refunded_cents')
+    .eq('month', month)
+  if (revErr) {
+    console.error('[academy/payout] revenue ledger query error:', revErr)
+    return NextResponse.json({ error: 'Revenue query failed' }, { status: 500 })
+  }
+  const invoicesCounted = (revenue ?? []).length
+  const grossCents = (revenue ?? []).reduce(
+    (sum, r) => sum + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0),
+    0,
+  )
   const poolCents = Math.round(grossCents * PRO_POOL_PCT)
 
   // ── Credits: sum engagement credits by creator for Pro-sourced watching ─────
@@ -109,100 +123,45 @@ export async function POST(req: NextRequest) {
     totalCredits += c
   }
 
-  // ── Write the pool snapshot (distributed=true up front; idempotency guarded) ─
-  const { error: poolErr } = await service
-    .from('pro_payout_pool')
-    .upsert(
-      {
-        month,
-        gross_cents: grossCents,
-        pool_cents: poolCents,
-        total_credits: totalCredits,
-        distributed: true,
-        distributed_at: new Date().toISOString(),
-      },
-      { onConflict: 'month' },
-    )
-  if (poolErr) {
-    console.error('[academy/payout] pool upsert error:', poolErr)
-    return NextResponse.json({ error: 'Pool write failed' }, { status: 500 })
-  }
-
-  // Nothing to split — snapshot recorded, no earnings.
-  if (totalCredits <= 0 || poolCents <= 0) {
-    return NextResponse.json({
-      month,
-      activeSubs,
-      grossCents,
-      poolCents,
-      totalCredits,
-      creatorsPaid: 0,
-      distributedCents: 0,
-      note: 'No Pro-sourced engagement to distribute this month.',
-    })
-  }
-
-  // ── Split by credit share; credit each creator's wallet ─────────────────────
+  // ── Split by credit share ───────────────────────────────────────────────────
   const earnings: { creator_id: string; credits: number; cents: number }[] = []
-  for (const [creatorId, credits] of creditsByCreator) {
-    const cents = Math.floor((poolCents * credits) / totalCredits)
-    earnings.push({ creator_id: creatorId, credits, cents })
+  if (totalCredits > 0 && poolCents > 0) {
+    for (const [creatorId, credits] of creditsByCreator) {
+      earnings.push({ creator_id: creatorId, credits, cents: Math.floor((poolCents * credits) / totalCredits) })
+    }
   }
 
-  let distributedCents = 0
-  let creatorsPaid = 0
-  for (const e of earnings) {
-    // Upsert earnings row first (idempotent on creator_id,month). If it already
-    // existed as paid, skip the wallet credit to avoid double-paying on retry.
-    const { data: prior } = await service
-      .from('pro_pool_earnings')
-      .select('paid')
-      .eq('creator_id', e.creator_id)
-      .eq('month', month)
-      .single()
-
-    if (prior?.paid) continue
-
-    const { error: earnErr } = await service
-      .from('pro_pool_earnings')
-      .upsert(
-        { creator_id: e.creator_id, month, credits: e.credits, cents: e.cents, paid: false },
-        { onConflict: 'creator_id,month' },
-      )
-    if (earnErr) {
-      console.error(`[academy/payout] earnings upsert error for ${e.creator_id}:`, earnErr)
-      continue
+  // ── One transaction: lock the month, credit every wallet, mark distributed ───
+  // Either everything below commits or nothing does, so the pool can never be
+  // flagged distributed while a wallet credit is missing, and a re-run (or a
+  // concurrent run) sees distributed=true and does nothing.
+  const { data: result, error: payErr } = await service.rpc('run_pro_payout', {
+    p_month: month,
+    p_expected_gross: grossCents,
+    p_pool_cents: poolCents,
+    p_total_credits: totalCredits,
+    p_earnings: earnings,
+  })
+  if (payErr) {
+    if (payErr.message?.includes('GROSS_CHANGED')) {
+      return NextResponse.json({ error: 'Revenue changed while the payout was being prepared — run it again', month }, { status: 409 })
     }
-
-    if (e.cents > 0) {
-      const { error: walletErr } = await service.rpc('wallet_add', {
-        p_creator_id: e.creator_id,
-        p_tokens: 0,
-        p_cents: e.cents,
-      })
-      if (walletErr) {
-        console.error(`[academy/payout] wallet_add error for ${e.creator_id}:`, walletErr)
-        continue // leave earnings row paid=false so a rerun can retry the credit
-      }
-    }
-
-    await service
-      .from('pro_pool_earnings')
-      .update({ paid: true })
-      .eq('creator_id', e.creator_id)
-      .eq('month', month)
-
-    distributedCents += e.cents
-    creatorsPaid += 1
+    console.error('[academy/payout] run_pro_payout failed (nothing was committed):', payErr)
+    return NextResponse.json({ error: 'Payout failed — nothing was paid; safe to run again' }, { status: 500 })
+  }
+  if (result?.status === 'already_distributed') {
+    return NextResponse.json({ skipped: true, reason: 'already distributed', month })
   }
 
   return NextResponse.json({
     month,
-    activeSubs,
+    source: 'recorded_invoices',
+    invoicesCounted,
     grossCents,
     poolCents,
     totalCredits,
-    creatorsPaid,
-    distributedCents,
+    creatorsPaid: result?.creators_paid ?? 0,
+    distributedCents: result?.distributed_cents ?? 0,
+    ...(earnings.length === 0 ? { note: 'No Pro revenue or Pro-sourced engagement to distribute this month.' } : {}),
   })
 }

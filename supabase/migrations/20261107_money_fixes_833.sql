@@ -406,3 +406,99 @@ $$;
 
 REVOKE ALL ON FUNCTION public.restore_credits_once(TEXT, UUID, NUMERIC, NUMERIC, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.restore_credits_once(TEXT, UUID, NUMERIC, NUMERIC, TEXT, TEXT) TO service_role;
+
+-- ── 4. Pro revenue ledger + atomic payout run ───────────────────────────
+-- The monthly creator pool used to be "active subscribers x list price", an
+-- estimate. It is now computed from invoices Stripe actually collected. The
+-- webhook (invoice.paid / charge.refunded) writes one row per Pro invoice.
+CREATE TABLE IF NOT EXISTS public.pro_revenue_ledger (
+  stripe_invoice_id      TEXT PRIMARY KEY,
+  user_id                UUID,
+  stripe_subscription_id TEXT,
+  amount_cents           BIGINT NOT NULL CHECK (amount_cents >= 0), -- collected, excluding tax
+  refunded_cents         BIGINT NOT NULL DEFAULT 0 CHECK (refunded_cents >= 0),
+  currency               TEXT NOT NULL DEFAULT 'usd',
+  paid_at                TIMESTAMPTZ NOT NULL,
+  month                  TEXT NOT NULL,                              -- 'YYYY-MM' (UTC) of paid_at
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pro_revenue_ledger_month ON public.pro_revenue_ledger (month);
+ALTER TABLE public.pro_revenue_ledger ENABLE ROW LEVEL SECURITY; -- service role only
+
+-- run_pro_payout: the whole distribution is ONE transaction. The pool row is
+-- locked, so two concurrent runs serialise; the second sees distributed=true and
+-- is a no-op. Every wallet credit and earnings row commits together with the
+-- distributed flag, or none of it does. Gross is re-read from the ledger inside
+-- the transaction and must equal what the caller used to compute the split.
+CREATE OR REPLACE FUNCTION public.run_pro_payout(
+  p_month          TEXT,
+  p_expected_gross BIGINT,
+  p_pool_cents     BIGINT,
+  p_total_credits  NUMERIC,
+  p_earnings       JSONB  -- [{ "creator_id": uuid, "credits": n, "cents": n }, ...]
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_distributed BOOLEAN;
+  v_gross       BIGINT;
+  v_paid        BIGINT := 0;
+  v_n           INT := 0;
+  e             RECORD;
+BEGIN
+  INSERT INTO public.pro_payout_pool (month) VALUES (p_month)
+  ON CONFLICT (month) DO NOTHING;
+
+  SELECT distributed INTO v_distributed
+    FROM public.pro_payout_pool WHERE month = p_month FOR UPDATE;
+  IF v_distributed THEN
+    RETURN jsonb_build_object('status', 'already_distributed');
+  END IF;
+
+  SELECT COALESCE(SUM(GREATEST(amount_cents - refunded_cents, 0)), 0) INTO v_gross
+    FROM public.pro_revenue_ledger WHERE month = p_month;
+  IF v_gross <> p_expected_gross THEN
+    RAISE EXCEPTION 'GROSS_CHANGED: ledger % vs expected %', v_gross, p_expected_gross;
+  END IF;
+
+  FOR e IN
+    SELECT * FROM jsonb_to_recordset(COALESCE(p_earnings, '[]'::jsonb))
+      AS x(creator_id UUID, credits NUMERIC, cents BIGINT)
+  LOOP
+    -- Insert the earnings row as paid; if one already exists and is paid (an old
+    -- partial run) leave it alone so that creator is never credited twice.
+    INSERT INTO public.pro_pool_earnings (creator_id, month, credits, cents, paid)
+    VALUES (e.creator_id, p_month, e.credits, e.cents, TRUE)
+    ON CONFLICT (creator_id, month) DO UPDATE
+      SET credits = EXCLUDED.credits, cents = EXCLUDED.cents, paid = TRUE
+      WHERE public.pro_pool_earnings.paid = FALSE;
+
+    IF FOUND AND e.cents > 0 THEN
+      PERFORM public.wallet_add(e.creator_id, 0, e.cents::INT);
+      v_paid := v_paid + e.cents;
+      v_n := v_n + 1;
+    END IF;
+  END LOOP;
+
+  UPDATE public.pro_payout_pool
+     SET gross_cents    = v_gross,
+         pool_cents     = p_pool_cents,
+         total_credits  = p_total_credits,
+         distributed    = TRUE,
+         distributed_at = now()
+   WHERE month = p_month;
+
+  RETURN jsonb_build_object(
+    'status', 'distributed',
+    'creators_paid', v_n,
+    'distributed_cents', v_paid,
+    'gross_cents', v_gross
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.run_pro_payout(TEXT, BIGINT, BIGINT, NUMERIC, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.run_pro_payout(TEXT, BIGINT, BIGINT, NUMERIC, JSONB) TO service_role;

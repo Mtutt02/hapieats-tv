@@ -335,6 +335,43 @@ export async function POST(req: NextRequest) {
         break
       }
 
+      // ── Pro subscription invoice paid: record REAL revenue for the creator pool ──
+      // pro_revenue_ledger is the only input to the monthly payout's gross. Keyed
+      // by invoice id, so a replay (or two event ids for one invoice) records once.
+      case 'invoice.paid': {
+        const invoice = event.data.object as Stripe.Invoice
+        const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id ?? null
+        let isPro = (invoice as any).subscription_details?.metadata?.kind === 'pro_subscription'
+        if (!isPro && subId) {
+          const { data: proRow, error } = await supabase
+            .from('pro_subscriptions')
+            .select('user_id')
+            .eq('stripe_subscription_id', subId)
+            .maybeSingle()
+          must(error, 'pro subscription lookup')
+          isPro = !!proRow
+        }
+        const collected = (invoice.amount_paid ?? 0) - ((invoice as any).tax ?? 0)
+        if (isPro && invoice.id && collected > 0) {
+          const paidAtSec = invoice.status_transitions?.paid_at ?? invoice.created
+          const paidAt = new Date(paidAtSec * 1000)
+          const { error } = await supabase.from('pro_revenue_ledger').upsert(
+            {
+              stripe_invoice_id: invoice.id,
+              user_id: (invoice as any).subscription_details?.metadata?.user_id ?? null,
+              stripe_subscription_id: subId,
+              amount_cents: collected,
+              currency: invoice.currency ?? 'usd',
+              paid_at: paidAt.toISOString(),
+              month: paidAt.toISOString().slice(0, 7),
+            },
+            { onConflict: 'stripe_invoice_id', ignoreDuplicates: true },
+          )
+          must(error, 'pro revenue ledger')
+        }
+        break
+      }
+
       // ── Invoice payment failed ────────────────────────────────────────────────
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
@@ -357,6 +394,19 @@ export async function POST(req: NextRequest) {
       case 'charge.dispute.created': {
         const isDispute = event.type === 'charge.dispute.created'
         const reason = isDispute ? 'chargeback' : 'refund'
+
+        // A refunded Pro invoice shrinks that month's pool. Absolute value from Stripe, so replays are harmless.
+        if (!isDispute) {
+          const charge = event.data.object as Stripe.Charge
+          const chargeInvoice = (charge as any).invoice as string | null
+          if (chargeInvoice) {
+            const { error } = await supabase
+              .from('pro_revenue_ledger')
+              .update({ refunded_cents: charge.amount_refunded ?? 0 })
+              .eq('stripe_invoice_id', chargeInvoice)
+            must(error, 'pro revenue refund')
+          }
+        }
 
         const paymentIntentId = isDispute
           ? ((event.data.object as Stripe.Dispute).payment_intent as string | null)

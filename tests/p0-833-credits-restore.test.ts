@@ -120,7 +120,7 @@ describe('credits restore', () => {
 
     const res = await checkout()
 
-    expect(res.status).toBe(200)
+    expect(res!.status).toBe(200)
     const args = mocks.sessionsCreate.mock.calls[0][0]
     const ttl = args.expires_at - Math.floor(Date.now() / 1000)
     expect(ttl).toBeGreaterThanOrEqual(30 * 60) // Stripe's minimum
@@ -134,8 +134,8 @@ describe('credits restore', () => {
 
     const res = await checkout()
 
-    expect(res.status).toBe(502)
-    expect(await res.json()).toEqual({ error: expect.stringContaining('credits were returned') })
+    expect(res!.status).toBe(502)
+    expect(await res!.json()).toEqual({ error: expect.stringContaining('credits were returned') })
     expect(gift()).toBe(4)
     expect(loan()).toBe(1)
   })
