@@ -502,3 +502,187 @@ $$;
 
 REVOKE ALL ON FUNCTION public.run_pro_payout(TEXT, BIGINT, BIGINT, NUMERIC, JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.run_pro_payout(TEXT, BIGINT, BIGINT, NUMERIC, JSONB) TO service_role;
+
+-- ── 5. Atomic gifts with request-id dedupe ──────────────────────────────
+-- Sender debit, ledger row, gift transaction, creator wallet credit and circle
+-- pool all happen in ONE transaction under a row lock on the sender's wallet.
+-- A client-generated request id makes a double-submit (double tap, retry after a
+-- timeout) charge exactly once.
+ALTER TABLE public.live_gift_transactions ADD COLUMN IF NOT EXISTS request_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_live_gift_tx_request
+  ON public.live_gift_transactions (sender_id, request_id) WHERE request_id IS NOT NULL;
+
+ALTER TABLE public.flavor_gift_events ADD COLUMN IF NOT EXISTS request_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_flavor_gift_events_request
+  ON public.flavor_gift_events (sender_id, request_id) WHERE request_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.send_live_gift(
+  p_request_id TEXT,
+  p_sender_id  UUID,
+  p_stream_id  UUID,
+  p_gift_id    UUID,
+  p_quantity   INT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_stream         RECORD;
+  v_gift           RECORD;
+  v_balance        INT;
+  v_dup            RECORD;
+  v_total          INT;
+  v_rate           JSONB;
+  v_cents_per_tok  NUMERIC;
+  v_total_cents    INT;
+  v_creator_cents  INT;
+  v_platform_cents INT;
+  v_circle_cents   INT;
+  v_tx_id          UUID;
+  v_month          TEXT := to_char(now(), 'YYYY-MM');
+  v_new_balance    INT;
+BEGIN
+  IF p_request_id IS NULL OR length(p_request_id) = 0 THEN
+    RAISE EXCEPTION 'REQUEST_ID_REQUIRED';
+  END IF;
+  IF p_quantity IS NULL OR p_quantity < 1 OR p_quantity > 10 THEN
+    RAISE EXCEPTION 'BAD_QUANTITY';
+  END IF;
+
+  SELECT id, creator_id, status, title INTO v_stream FROM public.live_streams WHERE id = p_stream_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'STREAM_NOT_FOUND'; END IF;
+  IF v_stream.status = 'ended' THEN RAISE EXCEPTION 'STREAM_ENDED'; END IF;
+  IF v_stream.creator_id = p_sender_id THEN RAISE EXCEPTION 'OWN_STREAM'; END IF;
+
+  SELECT id, name, emoji, token_cost, creator_pct, platform_pct, circle_pct INTO v_gift
+    FROM public.live_gifts WHERE id = p_gift_id AND is_active;
+  IF NOT FOUND THEN RAISE EXCEPTION 'GIFT_UNAVAILABLE'; END IF;
+
+  -- Serialise everything this sender does: lock their wallet row first.
+  INSERT INTO public.hapi_tokens (user_id, balance) VALUES (p_sender_id, 0)
+  ON CONFLICT (user_id) DO NOTHING;
+  SELECT balance INTO v_balance FROM public.hapi_tokens WHERE user_id = p_sender_id FOR UPDATE;
+
+  -- Replay of the same request: report the original result, charge nothing.
+  SELECT id, total_tokens, creator_earned_cents INTO v_dup
+    FROM public.live_gift_transactions
+   WHERE sender_id = p_sender_id AND request_id = p_request_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object(
+      'status', 'duplicate', 'transaction_id', v_dup.id, 'total_tokens', v_dup.total_tokens,
+      'creator_cents', v_dup.creator_earned_cents, 'remaining_balance', v_balance,
+      'gift', jsonb_build_object('name', v_gift.name, 'emoji', v_gift.emoji, 'token_cost', v_gift.token_cost),
+      'creator_id', v_stream.creator_id, 'stream_title', v_stream.title);
+  END IF;
+
+  v_total := v_gift.token_cost * p_quantity;
+  IF v_balance < v_total THEN
+    RAISE EXCEPTION 'INSUFFICIENT_BALANCE: required %, available %', v_total, v_balance USING ERRCODE = 'P0002';
+  END IF;
+
+  -- Debit + ledger (record_token_movement re-locks the same row and re-checks the balance).
+  PERFORM public.record_token_movement(
+    p_user_id      := p_sender_id,
+    p_type         := 'live_gift',
+    p_amount       := -v_total,
+    p_related_user := v_stream.creator_id,
+    p_description  := format('Sent %s%s %s on "%s"',
+                             CASE WHEN p_quantity > 1 THEN p_quantity::TEXT || 'x ' ELSE '' END,
+                             v_gift.emoji, v_gift.name, v_stream.title),
+    p_metadata     := jsonb_build_object('stream_id', p_stream_id, 'gift_id', p_gift_id,
+                                         'quantity', p_quantity, 'request_id', p_request_id)
+  );
+
+  SELECT value INTO v_rate FROM public.platform_settings WHERE key = 'token_conversion_rate';
+  v_cents_per_tok  := COALESCE((v_rate ->> 'cents_per_token')::NUMERIC, 1);
+  v_total_cents    := round(v_total * v_cents_per_tok);
+  v_creator_cents  := floor(v_total_cents * (v_gift.creator_pct  / 100.0));
+  v_platform_cents := floor(v_total_cents * (v_gift.platform_pct / 100.0));
+  v_circle_cents   := v_total_cents - v_creator_cents - v_platform_cents;
+
+  INSERT INTO public.live_gift_transactions (
+    sender_id, recipient_id, stream_id, gift_id, quantity, total_tokens,
+    creator_earned_cents, platform_fee_cents, circle_pool_cents, request_id
+  ) VALUES (
+    p_sender_id, v_stream.creator_id, p_stream_id, p_gift_id, p_quantity, v_total,
+    v_creator_cents, v_platform_cents, v_circle_cents, p_request_id
+  ) RETURNING id INTO v_tx_id;
+
+  PERFORM public.wallet_add(v_stream.creator_id, v_total, v_creator_cents);
+
+  IF v_circle_cents > 0 THEN
+    INSERT INTO public.creator_circle_pool (month, total_cents) VALUES (v_month, v_circle_cents)
+    ON CONFLICT (month) DO UPDATE SET total_cents = public.creator_circle_pool.total_cents + EXCLUDED.total_cents;
+  END IF;
+
+  SELECT balance INTO v_new_balance FROM public.hapi_tokens WHERE user_id = p_sender_id;
+
+  RETURN jsonb_build_object(
+    'status', 'ok', 'transaction_id', v_tx_id, 'total_tokens', v_total,
+    'creator_cents', v_creator_cents, 'remaining_balance', v_new_balance,
+    'gift', jsonb_build_object('name', v_gift.name, 'emoji', v_gift.emoji, 'token_cost', v_gift.token_cost),
+    'creator_id', v_stream.creator_id, 'stream_title', v_stream.title);
+END;
+$$;
+
+-- Flavor Points gift: debit sender, record the event, credit creator earnings, atomically.
+CREATE OR REPLACE FUNCTION public.send_flavor_gift(
+  p_request_id    TEXT,
+  p_sender_id     UUID,
+  p_creator_id    UUID,
+  p_stream_id     UUID,
+  p_gift_id       TEXT,
+  p_points_cost   INT,
+  p_creator_share INT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_balance INT;
+  v_dup     UUID;
+  v_event   UUID;
+BEGIN
+  IF p_request_id IS NULL OR length(p_request_id) = 0 THEN
+    RAISE EXCEPTION 'REQUEST_ID_REQUIRED';
+  END IF;
+  IF p_points_cost IS NULL OR p_points_cost <= 0 THEN
+    RAISE EXCEPTION 'BAD_COST';
+  END IF;
+
+  SELECT balance INTO v_balance FROM public.flavor_wallets WHERE user_id = p_sender_id FOR UPDATE;
+  IF NOT FOUND THEN v_balance := 0; END IF;
+
+  SELECT id INTO v_dup FROM public.flavor_gift_events
+   WHERE sender_id = p_sender_id AND request_id = p_request_id;
+  IF FOUND THEN
+    RETURN jsonb_build_object('status', 'duplicate', 'event_id', v_dup, 'new_balance', v_balance);
+  END IF;
+
+  IF v_balance < p_points_cost THEN
+    RAISE EXCEPTION 'INSUFFICIENT_BALANCE: required %, available %', p_points_cost, v_balance USING ERRCODE = 'P0002';
+  END IF;
+
+  UPDATE public.flavor_wallets
+     SET balance = balance - p_points_cost, updated_at = now()
+   WHERE user_id = p_sender_id;
+
+  INSERT INTO public.flavor_gift_events (stream_id, sender_id, creator_id, gift_id, points_spent, creator_share, request_id)
+  VALUES (p_stream_id, p_sender_id, p_creator_id, p_gift_id, p_points_cost, p_creator_share, p_request_id)
+  RETURNING id INTO v_event;
+
+  INSERT INTO public.creator_flavor_earnings (creator_id, gift_event_id, points_earned, status)
+  VALUES (p_creator_id, v_event, p_creator_share, 'pending');
+
+  RETURN jsonb_build_object('status', 'ok', 'event_id', v_event, 'new_balance', v_balance - p_points_cost);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.send_live_gift(TEXT, UUID, UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.send_flavor_gift(TEXT, UUID, UUID, UUID, TEXT, INT, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.send_live_gift(TEXT, UUID, UUID, UUID, INT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.send_flavor_gift(TEXT, UUID, UUID, UUID, TEXT, INT, INT) TO service_role;

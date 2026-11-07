@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Gift, X, Zap } from 'lucide-react'
 import Link from 'next/link'
@@ -28,6 +28,7 @@ export default function GiftDrawer({ streamId, creatorId, onGiftSent }: Props) {
   const [open, setOpen] = useState(false)
   const [balance, setBalance] = useState<number | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
+  const requestIds = useRef<Record<string, string>>({}) // one id per gift tap; same tap = charged once
   const [flash, setFlash] = useState<{ gift: typeof GIFTS[0]; type: 'success' | 'error'; msg: string } | null>(null)
 
   useEffect(() => {
@@ -45,12 +46,14 @@ export default function GiftDrawer({ streamId, creatorId, onGiftSent }: Props) {
       return
     }
     setLoading(gift.id)
+    const requestId = (requestIds.current[gift.id] ??= crypto.randomUUID())
     try {
       const res = await fetch('/api/flavor/gift', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ giftId: gift.id, streamId, creatorId }),
+        body: JSON.stringify({ giftId: gift.id, streamId, creatorId, requestId }),
       })
+      delete requestIds.current[gift.id]
       const json = await res.json()
       if (!res.ok) {
         setFlash({ gift, type: 'error', msg: json.error ?? 'Gift failed' })
