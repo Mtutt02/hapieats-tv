@@ -74,7 +74,8 @@ export async function handleProCheckoutCompleted(
       },
       { onConflict: 'user_id' },
     )
-  if (error) console.error('[academy/pro] pro_subscriptions upsert error:', error)
+  // Throw so the Stripe webhook fails the event and Stripe retries it.
+  if (error) throw new Error(`pro_subscriptions upsert: ${error.message}`)
 }
 
 /**
@@ -103,5 +104,5 @@ export async function handleProSubscriptionEvent(
       updated_at: new Date().toISOString(),
     })
     .eq('stripe_subscription_id', subId)
-  if (error) console.error('[academy/pro] pro_subscriptions update error:', error)
+  if (error) throw new Error(`pro_subscriptions update: ${error.message}`)
 }
