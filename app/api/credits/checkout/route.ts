@@ -24,6 +24,16 @@ import {
   deductCredits,
 } from '@/lib/credits'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { randomUUID } from 'crypto'
+
+// Stripe only accepts expires_at between 30 minutes and 24 hours out. The shortest legal
+// window keeps credits tied up as briefly as possible: when the session expires without
+// payment (or the buyer cancels and walks away) the webhook gives the credits back.
+const SESSION_TTL_SECONDS = 31 * 60
+
+const CHECKOUT_FAILED = {
+  error: 'We could not start checkout. Your credits were returned — please try again.',
+}
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -81,6 +91,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Deduct credits first (atomic — any DB error throws before Stripe)
+    const checkoutRef = randomUUID()
+    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, `precheckout:${checkoutRef}`, why)
     await deductCredits({
       userId: user.id,
       giftUsed: application.giftUsed,
@@ -92,13 +104,18 @@ export async function POST(req: NextRequest) {
 
     if (application.fullyCoveredByCredits) {
       // Unlock the video directly — no Stripe needed
-      await serviceClient.from('purchases').upsert({
+      const { error: unlockErr } = await serviceClient.from('purchases').upsert({
         buyer_id: user.id,
         video_id: videoId,
         stripe_payment_intent_id: null,
         amount: 0,
         credit_funded: true,
       }, { onConflict: 'buyer_id,video_id', ignoreDuplicates: true })
+      if (unlockErr) {
+        console.error('[credits/checkout] ppv unlock failed, restoring credits:', unlockErr)
+        await restore('ppv unlock failed')
+        return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
+      }
 
       return NextResponse.json({
         success: true,
@@ -111,25 +128,28 @@ export async function POST(req: NextRequest) {
     // Partial — create Stripe session for the remainder
     const remainingCents = Math.round(application.remainingCash * 100)
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('stripe_customer_id')
-      .eq('id', user.id)
-      .single()
+    let session
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('stripe_customer_id')
+        .eq('id', user.id)
+        .single()
 
-    let customerId = profile?.stripe_customer_id
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email,
-        metadata: { supabase_user_id: user.id },
-      })
-      customerId = customer.id
-      await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
-    }
+      let customerId = profile?.stripe_customer_id
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          metadata: { supabase_user_id: user.id },
+        })
+        customerId = customer.id
+        await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
+      }
 
-    const session = await stripe.checkout.sessions.create({
+      session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
       success_url: safeSuccess,
       cancel_url: safeCancel,
       line_items: [
@@ -155,6 +175,12 @@ export async function POST(req: NextRequest) {
         loanUsed: application.loanUsed.toString(),
       },
     })
+    } catch (err) {
+      // No Stripe session exists, so no webhook will ever come: give the credits back now.
+      console.error('[credits/checkout] ppv session creation failed, restoring credits:', err)
+      await restore('ppv checkout session failed')
+      return NextResponse.json(CHECKOUT_FAILED, { status: 502 })
+    }
 
     return NextResponse.json({
       success: false,
@@ -186,6 +212,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Deduct credits atomically
+    const checkoutRef = randomUUID()
+    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, `precheckout:${checkoutRef}`, why)
     await deductCredits({
       userId: user.id,
       giftUsed: application.giftUsed,
@@ -196,29 +224,20 @@ export async function POST(req: NextRequest) {
     })
 
     if (application.fullyCoveredByCredits) {
-      // Credit wallet directly
-      const { data: wallet } = await serviceClient
-        .from('flavor_wallets')
-        .select('balance')
-        .eq('user_id', user.id)
-        .single()
-
-      if (wallet) {
-        await serviceClient
-          .from('flavor_wallets')
-          .update({ balance: wallet.balance + pkg.points, updated_at: new Date().toISOString() })
-          .eq('user_id', user.id)
-      } else {
-        await serviceClient.from('flavor_wallets').insert({ user_id: user.id, balance: pkg.points })
-      }
-
-      await serviceClient.from('flavor_purchases').insert({
-        user_id: user.id,
-        package_id: packageId,
-        points_credited: pkg.points,
-        amount_usd: 0,
-        stripe_session_id: null,
+      // Credit wallet + purchase row in one transaction, once per checkout attempt
+      const { error: creditErr } = await serviceClient.rpc('credit_flavor_once', {
+        p_key: `credit-checkout:${checkoutRef}:flavor`,
+        p_user_id: user.id,
+        p_package_id: packageId,
+        p_points: pkg.points,
+        p_amount_usd: 0,
+        p_session_id: null,
       })
+      if (creditErr) {
+        console.error('[credits/checkout] flavor credit failed, restoring credits:', creditErr)
+        await restore('flavor credit failed')
+        return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
+      }
 
       return NextResponse.json({
         success: true,
@@ -232,25 +251,28 @@ export async function POST(req: NextRequest) {
     // Partial — create Stripe session for remainder
     const remainingCents = Math.round(application.remainingCash * 100)
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('stripe_customer_id')
-      .eq('id', user.id)
-      .single()
+    let session
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('stripe_customer_id')
+        .eq('id', user.id)
+        .single()
 
-    let customerId = profile?.stripe_customer_id
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email,
-        metadata: { supabase_user_id: user.id },
-      })
-      customerId = customer.id
-      await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
-    }
+      let customerId = profile?.stripe_customer_id
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          metadata: { supabase_user_id: user.id },
+        })
+        customerId = customer.id
+        await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
+      }
 
-    const session = await stripe.checkout.sessions.create({
+      session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
       success_url: safeSuccess,
       cancel_url: safeCancel,
       line_items: [
@@ -276,6 +298,11 @@ export async function POST(req: NextRequest) {
         loanUsed: application.loanUsed.toString(),
       },
     })
+    } catch (err) {
+      console.error('[credits/checkout] flavor session creation failed, restoring credits:', err)
+      await restore('flavor checkout session failed')
+      return NextResponse.json(CHECKOUT_FAILED, { status: 502 })
+    }
 
     return NextResponse.json({
       success: false,
@@ -285,4 +312,23 @@ export async function POST(req: NextRequest) {
       stripeUrl: session.url,
     })
   }
+}
+
+/** Give debited credits back, once per key. Never throws: the caller is already on an error path. */
+async function restoreCredits(
+  service: ReturnType<typeof createServiceClient>,
+  userId: string,
+  application: { giftUsed: number; loanUsed: number },
+  key: string,
+  why: string,
+) {
+  const { error } = await service.rpc('restore_credits_once', {
+    p_key: key,
+    p_user_id: userId,
+    p_gift: application.giftUsed,
+    p_loan: application.loanUsed,
+    p_ref: key,
+    p_notes: `Credits returned: ${why}`,
+  })
+  if (error) console.error('[credits/checkout] CREDIT RESTORE FAILED — manual fix needed:', key, error)
 }

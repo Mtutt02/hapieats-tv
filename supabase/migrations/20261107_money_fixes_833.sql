@@ -341,3 +341,68 @@ GRANT EXECUTE ON FUNCTION public.release_iap_event(TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.credit_tokens_once(TEXT, UUID, TEXT, INT, TEXT, JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.credit_flavor_once(TEXT, UUID, TEXT, INT, NUMERIC, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.repay_loan_once(TEXT, UUID, NUMERIC, TEXT) TO service_role;
+
+-- ── 3. Restore credits for an abandoned partial-credit checkout ─────────
+-- /api/credits/checkout debits credits BEFORE the Stripe session exists. If the
+-- session expires, the async payment fails, or session creation itself fails,
+-- the credits must come back — exactly once per key.
+ALTER TABLE public.credit_ledger DROP CONSTRAINT IF EXISTS credit_ledger_entry_type_check;
+ALTER TABLE public.credit_ledger ADD CONSTRAINT credit_ledger_entry_type_check CHECK (entry_type IN (
+  'grant_gift','grant_loan','spend_gift','spend_loan',
+  'repay_loan_earnings','repay_loan_manual','expire_gift',
+  'restore_credit'
+));
+
+CREATE OR REPLACE FUNCTION public.restore_credits_once(
+  p_key     TEXT,
+  p_user_id UUID,
+  p_gift    NUMERIC,
+  p_loan    NUMERIC,
+  p_ref     TEXT,
+  p_notes   TEXT DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_n    INT;
+  v_gift NUMERIC;
+  v_loan NUMERIC;
+BEGIN
+  IF COALESCE(p_gift, 0) < 0 OR COALESCE(p_loan, 0) < 0 OR COALESCE(p_gift, 0) + COALESCE(p_loan, 0) <= 0 THEN
+    RAISE EXCEPTION 'restore_credits_once: amounts must be positive';
+  END IF;
+
+  INSERT INTO public.money_effects (effect_key, kind) VALUES (p_key, 'credit_restore')
+  ON CONFLICT (effect_key) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n = 0 THEN
+    RETURN FALSE;
+  END IF;
+
+  INSERT INTO public.app_credits (user_id, gift_balance, loan_balance)
+  VALUES (p_user_id, 0, 0)
+  ON CONFLICT (user_id) DO NOTHING;
+
+  UPDATE public.app_credits
+     SET gift_balance = round(gift_balance + COALESCE(p_gift, 0), 2),
+         loan_balance = round(loan_balance + COALESCE(p_loan, 0), 2)
+   WHERE user_id = p_user_id
+  RETURNING gift_balance, loan_balance INTO v_gift, v_loan;
+
+  INSERT INTO public.credit_ledger (
+    user_id, entry_type, amount, gift_balance_after, loan_balance_after,
+    reference_id, reference_type, notes
+  ) VALUES (
+    p_user_id, 'restore_credit', COALESCE(p_gift, 0) + COALESCE(p_loan, 0), v_gift, v_loan,
+    p_ref, 'checkout_restore', p_notes
+  );
+
+  RETURN TRUE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.restore_credits_once(TEXT, UUID, NUMERIC, NUMERIC, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.restore_credits_once(TEXT, UUID, NUMERIC, NUMERIC, TEXT, TEXT) TO service_role;
