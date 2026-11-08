@@ -7,6 +7,14 @@
 -- valid values stay valid). Existing stripe_events / iap_events rows become
 -- status='completed', which is exactly what they meant before.
 --
+-- PRE-CHECK on production first (read-only). Both CHECK constraints are
+-- swapped NOT VALID + VALIDATE and the migration will not abort on unknown
+-- legacy values, but you want to know about them:
+--   select distinct type       from public.token_ledger;
+--   select distinct entry_type from public.credit_ledger;
+-- Anything outside the lists in section 2 / section 3 leaves that constraint
+-- NOT VALID (still enforced for new rows) and a WARNING is logged.
+--
 -- APPLY THIS BEFORE deploying the matching code: the new webhook calls the
 -- claim_* functions below and returns 500 (Stripe retries) until they exist.
 --
@@ -178,13 +186,21 @@ ALTER TABLE public.money_effects ENABLE ROW LEVEL SECURITY; -- service role only
 
 -- token_ledger.type CHECK never allowed 'live_gift' or 'iap_purchase', the
 -- two types the live-gift and RevenueCat routes write. Widen it (superset).
+-- NOT VALID first (new rows are checked at once, existing rows are not), then
+-- VALIDATE in a block that tolerates failure: if production already holds a type
+-- outside this list the migration must not abort. See the header pre-checks.
 ALTER TABLE public.token_ledger DROP CONSTRAINT IF EXISTS token_ledger_type_check;
 ALTER TABLE public.token_ledger ADD CONSTRAINT token_ledger_type_check CHECK (type IN (
   'purchase','gift_sent','gift_received','challenge_vote',
   'creator_goal_contribution','platform_fee','refund',
   'adjustment','circle_pool_distribution','streak_bonus',
   'live_gift','iap_purchase'
-));
+)) NOT VALID;
+DO $$ BEGIN
+  ALTER TABLE public.token_ledger VALIDATE CONSTRAINT token_ledger_type_check;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'money_fixes_833: token_ledger_type_check left NOT VALID (legacy rows outside the list): %', SQLERRM;
+END $$;
 
 -- Credit (or, for p_amount < 0, claw back) Hapi Tokens exactly once per key.
 -- Returns TRUE when applied, FALSE when the key was already used.
@@ -353,7 +369,12 @@ ALTER TABLE public.credit_ledger ADD CONSTRAINT credit_ledger_entry_type_check C
   'grant_gift','grant_loan','spend_gift','spend_loan',
   'repay_loan_earnings','repay_loan_manual','expire_gift',
   'restore_credit'
-));
+)) NOT VALID;
+DO $$ BEGIN
+  ALTER TABLE public.credit_ledger VALIDATE CONSTRAINT credit_ledger_entry_type_check;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'money_fixes_833: credit_ledger_entry_type_check left NOT VALID (legacy rows outside the list): %', SQLERRM;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.restore_credits_once(
   p_key     TEXT,
