@@ -54,7 +54,7 @@ CREATE OR REPLACE FUNCTION public.claim_stripe_event(
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_status TEXT;
@@ -84,7 +84,7 @@ CREATE OR REPLACE FUNCTION public.complete_stripe_event(p_id TEXT)
 RETURNS VOID
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE public.stripe_events
      SET status = 'completed', lease_until = NULL, completed_at = now()
@@ -96,7 +96,7 @@ CREATE OR REPLACE FUNCTION public.release_stripe_event(p_id TEXT)
 RETURNS VOID
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE public.stripe_events
      SET lease_until = now()
@@ -113,7 +113,7 @@ CREATE OR REPLACE FUNCTION public.claim_iap_event(
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_status TEXT;
@@ -144,7 +144,7 @@ CREATE OR REPLACE FUNCTION public.complete_iap_event(p_event_id TEXT)
 RETURNS VOID
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE public.iap_events
      SET status = 'completed', lease_until = NULL, completed_at = now()
@@ -155,7 +155,7 @@ CREATE OR REPLACE FUNCTION public.release_iap_event(p_event_id TEXT)
 RETURNS VOID
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   UPDATE public.iap_events
      SET lease_until = now()
@@ -197,7 +197,7 @@ CREATE OR REPLACE FUNCTION public.credit_tokens_once(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_n INT;
@@ -245,7 +245,7 @@ CREATE OR REPLACE FUNCTION public.credit_flavor_once(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_n INT;
@@ -279,7 +279,7 @@ CREATE OR REPLACE FUNCTION public.repay_loan_once(
 RETURNS NUMERIC
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_n      INT;
@@ -364,7 +364,7 @@ CREATE OR REPLACE FUNCTION public.restore_credits_once(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_n    INT;
@@ -440,7 +440,7 @@ CREATE OR REPLACE FUNCTION public.run_pro_payout(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_distributed BOOLEAN;
@@ -526,7 +526,7 @@ CREATE OR REPLACE FUNCTION public.send_live_gift(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_stream         RECORD;
@@ -640,7 +640,7 @@ CREATE OR REPLACE FUNCTION public.send_flavor_gift(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_balance INT;
@@ -686,3 +686,36 @@ REVOKE ALL ON FUNCTION public.send_live_gift(TEXT, UUID, UUID, UUID, INT) FROM P
 REVOKE ALL ON FUNCTION public.send_flavor_gift(TEXT, UUID, UUID, UUID, TEXT, INT, INT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.send_live_gift(TEXT, UUID, UUID, UUID, INT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.send_flavor_gift(TEXT, UUID, UUID, UUID, TEXT, INT, INT) TO service_role;
+
+-- ── 6. Close the privilege hole on pre-existing money functions (#833-7) ─
+-- These SECURITY DEFINER functions were never revoked. Postgres grants EXECUTE
+-- to PUBLIC by default and Supabase exposes public functions at /rest/v1/rpc/*,
+-- so any signed-in user could call e.g. record_token_movement(self, 'purchase',
+-- 1000000) and mint tokens, or approve their own monetization by passing an
+-- admin's uuid. Every app caller uses the service-role client, so lock them to
+-- service_role and pin search_path. Missing signatures (an environment that
+-- never ran one of the older migrations) are skipped, not an error.
+DO $$
+DECLARE
+  v_sig TEXT;
+  v_sigs TEXT[] := ARRAY[
+    'public.record_token_movement(uuid,text,int,uuid,uuid,uuid,text,jsonb)',
+    'public.admin_review_monetization_request(uuid,text,uuid,text)',
+    'public.check_monetization_auto_unlock(uuid)',
+    'public.ensure_token_wallet(uuid)',
+    'public.ensure_creator_wallet(uuid)',
+    'public.update_creator_streak(uuid,text)',
+    'public.wallet_add(uuid,int,int)',
+    'public.bump_course_enrollment(uuid)'
+  ];
+BEGIN
+  FOREACH v_sig IN ARRAY v_sigs LOOP
+    IF to_regprocedure(v_sig) IS NULL THEN
+      RAISE NOTICE 'money_fixes_833: % not found, skipped', v_sig;
+      CONTINUE;
+    END IF;
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', v_sig);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', v_sig);
+    EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', v_sig);
+  END LOOP;
+END $$;
