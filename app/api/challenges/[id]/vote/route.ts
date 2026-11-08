@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -42,6 +43,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Deduct tokens if needed
   if (finalTokensSpent > 0) {
+    // Spending purchased tokens follows the purchase pause (like goal contributions).
+    // Free votes are not payments and keep working.
+    const paused = paymentsPausedResponse()
+    if (paused) return paused
+
     const { data: wallet } = await service.from('hapi_tokens').select('balance').eq('user_id', user.id).single()
     if (!wallet || wallet.balance < finalTokensSpent) {
       return NextResponse.json({ error: 'Insufficient tokens', balance: wallet?.balance ?? 0 }, { status: 402 })
