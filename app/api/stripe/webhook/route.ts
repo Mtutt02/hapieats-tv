@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session
         if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
-          console.log(`[stripe/webhook] ${event.type} ${session.id}: payment_status=${session.payment_status} — not fulfilling until paid`)
+          console.log(`[stripe/webhook] ${event.type} ${session.id}: payment_status=${session.payment_status} â€” not fulfilling until paid`)
           break
         }
         const { userId, checkoutMode, videoId } = session.metadata ?? {}

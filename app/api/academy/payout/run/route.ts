@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
   // Refuse, and do NOT flag the month distributed; backfill, then re-run.
   if (invoicesCounted === 0) {
     return NextResponse.json(
-      { error: 'No recorded Pro invoices for that month — backfill pro_revenue_ledger before paying it out', month, invoicesCounted: 0 },
+      { error: 'No recorded Pro invoices for that month â€” backfill pro_revenue_ledger before paying it out', month, invoicesCounted: 0 },
       { status: 409 },
     )
   }
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
     }
     if (payErr.message?.includes('BAD_SPLIT')) {
       console.error('[academy/payout] run_pro_payout refused the split:', payErr.message)
-      return NextResponse.json({ error: 'Payout split failed validation — nothing was paid', month }, { status: 500 })
+      return NextResponse.json({ error: 'Payout split failed validation â€” nothing was paid', month }, { status: 500 })
     }
     console.error('[academy/payout] run_pro_payout failed (nothing was committed):', payErr)
     return NextResponse.json({ error: 'Payout failed â€” nothing was paid; safe to run again' }, { status: 500 })
