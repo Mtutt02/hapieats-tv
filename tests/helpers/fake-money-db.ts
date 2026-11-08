@@ -160,6 +160,10 @@ export class MoneyDb {
     return true
   }
   sql_check_monetization_auto_unlock() { return null }
+  sql_bump_course_enrollment(a: Row) {
+    const c = this.rows('courses').find(r => r.id === a.p_course_id)
+    if (c) c.enrollment_count = (c.enrollment_count ?? 0) + 1
+  }
 
   /** Mirrors reverse_tokens_for_payment (section 8 of the migration). */
   sql_reverse_tokens_for_payment(a: Row) {

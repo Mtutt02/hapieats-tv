@@ -160,7 +160,8 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Course enrollment — unique (course_id, user_id). With ignoreDuplicates the
+        // Course enrollment — unique (course_id, user_id) (index added by the 20261107 migration; the
+        // upsert needs it). With ignoreDuplicates the
         // upsert returns only rows it actually inserted, so the counter moves once.
         if (checkoutMode === 'course_enrollment' && userId) {
           const courseId = session.metadata?.courseId ?? ''
@@ -180,19 +181,11 @@ export async function POST(req: NextRequest) {
               .select('course_id')
             must(enrollErr, 'course enrollment')
 
+            // Atomic counter bump (bump_course_enrollment), not read-then-write. Only the
+            // delivery that actually inserted the enrollment row bumps it.
             if (inserted && inserted.length > 0) {
-              const { data: course } = await supabase
-                .from('courses')
-                .select('enrollment_count')
-                .eq('id', courseId)
-                .single()
-              if (course) {
-                const { error } = await supabase
-                  .from('courses')
-                  .update({ enrollment_count: (course.enrollment_count ?? 0) + 1 })
-                  .eq('id', courseId)
-                must(error, 'course enrollment_count')
-              }
+              const { error: bumpErr } = await supabase.rpc('bump_course_enrollment', { p_course_id: courseId })
+              must(bumpErr, 'course enrollment_count')
             }
           }
         }
