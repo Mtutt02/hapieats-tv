@@ -24,8 +24,10 @@ ALTER TABLE public.stripe_events ADD COLUMN IF NOT EXISTS lease_until  TIMESTAMP
 ALTER TABLE public.stripe_events ADD COLUMN IF NOT EXISTS attempts     INT  NOT NULL DEFAULT 0;
 ALTER TABLE public.stripe_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 -- Rows that already exist were claimed under the old scheme: treat as done.
--- New rows start life as 'processing'.
-ALTER TABLE public.stripe_events ALTER COLUMN status SET DEFAULT 'processing';
+-- The column default STAYS 'completed' on purpose: until the new code is
+-- deployed, the old webhook inserts bare {id,type} rows and never completes
+-- them. Defaulting those to 'processing' would let the new claim_* re-fulfil
+-- them (double credit). claim_stripe_event sets 'processing' explicitly.
 
 DO $$ BEGIN
   ALTER TABLE public.stripe_events
@@ -36,7 +38,7 @@ ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS status       TEXT NOT NUL
 ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS lease_until  TIMESTAMPTZ;
 ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS attempts     INT  NOT NULL DEFAULT 0;
 ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
-ALTER TABLE public.iap_events ALTER COLUMN status SET DEFAULT 'processing';
+-- (default stays 'completed' here too, same reason; claim_iap_event is explicit)
 
 DO $$ BEGIN
   ALTER TABLE public.iap_events
