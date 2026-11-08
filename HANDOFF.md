@@ -133,3 +133,102 @@ select conname, convalidated from pg_constraint where conname in ('token_ledger_
 - `charge.dispute.closed` (merchant *won*): the dispute no longer reduces the Pro ledger / re-grants nothing; handle it to undo `disputed_cents` (and decide about tokens).
 - `update_creator_streak` (pre-existing): `column reference "current_streak" is ambiguous` when run on Postgres (RETURNS TABLE column clashes with a table column). Found while testing privileges; not touched (not money-moving by itself, but the streak route that grants bonus tokens depends on it). Needs `#variable_conflict use_column` or qualified columns.
 - Prod has dashboard-made objects that no migration creates (`course_enrollments`, `course_lessons`, …): a fresh DB cannot be built from `supabase/migrations` alone.
+
+---
+
+# ROUND 4 — fix list from the round-3 re-review (2026-11-08)
+
+Branch `marlowe/p0-833-money`, base `a63ebc0`. Worked on the iMac in `~/code/hapieats-833-r4` (worktree of `hapieats-tv-marlowe`).
+Approved scope only: code, tests, SQL edits, push of the feature branch. **Not done, on purpose:** no merge, no migration applied anywhere, no REVOKE/GRANT on a live DB, no deploy, no Stripe Dashboard change, no real charge or refund, no env value read or printed. `PAYMENTS_PAUSED=1` and `CREATOR_PAYOUTS_PAUSED=1` are untouched.
+New dependencies: **none** in the app (`supabase/sqltest/` has its own `package.json` with `@electric-sql/pglite`; it is not part of the app build or of `npm test`).
+
+## Per-item status
+
+| # | item | status | covered by |
+|---|---|---|---|
+| 1 | **N2** `current_period_end` undefined on basil (RangeError, event retried forever) | **FIXED** | `currentPeriodEnd/Start(sub)` in `lib/stripe-shapes.ts` read `sub.current_period_end ?? sub.items.data[0].current_period_end`, else `null`. Used by the webhook (channel subscription) and by both reads in `lib/academy/pro.ts` (start AND end). If neither exists the column is **left out of the write** instead of written as `null`, so a good stored value is never wiped; a brand-new row gets the column default (NULL). Tests: `round4-webhook` "N2" (6): helpers, basil item-level, pre-basil, neither shape (200, existing value kept), new row, Pro handlers. `types/index.ts:80` is a type only. |
+| 2 | **N1 + F9** basil charges don't name their invoice, so refunds/disputes never reduced `pro_revenue_ledger` | **FIXED** (code + SQL + tests); live Stripe behaviour **NOT VERIFIED** (below) | (a) `pro_revenue_ledger.stripe_payment_intent_id TEXT` + partial unique index `uq_pro_revenue_ledger_payment_intent`; filled at `invoice.paid` from `invoice.payment_intent` (old) or `invoice.payments[]` (basil, only present if expanded), else one InvoicePayments lookup (failure is logged, the revenue row is still written). (b) `charge.refunded` / `charge.dispute.created` match `charge.invoice` first, then `stripe_payment_intent_id = charge.payment_intent`. (c) last resort: InvoicePayments lookup by payment intent; if it throws, the event still completes so the token clawback runs. No match = no-op. Tests: `round4-webhook` "N1" (12): old-shape charge by invoice, basil charge by PI (no API call), basil dispute by PI, last-resort lookup, unmatched charge no-op, lookup throws, replay, invoice.paid stamps PI in 4 shapes. SQL: test4 (column, partial unique, find-by-PI). |
+| 3 | **N3** paid challenge votes can double-charge | **FIXED**; real lock contention **NOT VERIFIED** | `cast_paid_vote(p_user_id, p_challenge_id, p_entry_id, p_cost)` SECURITY DEFINER, `search_path = public, pg_temp`, REVOKE PUBLIC/anon/authenticated, GRANT service_role: locks the `hapi_tokens` row `FOR UPDATE`, inserts the vote under the existing unique key `(entry_id, voter_id)` (`ON CONFLICT DO NOTHING`), debits via `record_token_movement` only if the insert happened; insufficient balance raises and rolls the vote back. Also re-checks entry approved / challenge in voting / not your own entry. Route calls it; duplicate = 200 `{duplicate:true, tokens_spent:0}`; free duplicate vote no longer 500s. Tests: `round4-credits-vote` "N3" (6): two concurrent votes = 1 vote + 1 debit, retry, separate entries, 402, RPC failure leaves nothing, free duplicate. SQL: test4 "N3" (7). PGlite has one connection, so true concurrent locking is argued from the SQL, not exercised; the JS test uses a fake whose RPC body is atomic. |
+| 4 | **S1** first-draft DB keeps `status DEFAULT 'processing'`; `disputed_cents` has no CHECK | **FIXED** | `ALTER COLUMN status SET DEFAULT 'completed'` on `stripe_events` and `iap_events`; `disputed_cents >= 0` CHECK added by name inside a `DO` block guarded by `pg_constraint` (`NOT VALID` then `VALIDATE`, a failure is a WARNING). **Extra (not asked, needed for the same case):** rows the OLD webhook wrote while the first-draft default was live are `processing` with `lease_until IS NULL AND attempts = 0` (the new claim always sets attempts >= 1 and a lease); the migration marks exactly those `completed`, otherwise the new claim would treat them as a crashed delivery and re-fulfil them. Tests: SQL test4 on a DB that applied the **real first draft** (`git show 6b53e72:…`), then the new migration twice: defaults, repaired rows, a genuine in-flight claim left alone, CHECK exists once and rejects `-1`. |
+| 5 | **S2** owned-check + debit race in `/api/credits/checkout` (+ #6 sweeper follow-up) | **FIXED** (PPV); sweeper function exists but is **not scheduled** | `pending_credit_checkouts (buyer_id, video_id)` primary key. Route order: owned check (`.limit(1)`, no more `maybeSingle()` 500 on duplicate purchase rows) -> `peek_credit_checkout` (live claim = 409 + the Stripe URL; an EXPIRED claim is settled first, which matters because after a crash the buyer has 0 credits) -> `claim_credit_checkout` (second claimant gets 409) -> owned **re-check inside the claim** -> debit (a failed debit releases the claim) -> unlock / Stripe session. Released on: full-credit unlock, route restore, webhook `expired`/`async_payment_failed` restore, webhook `completed` for `credit_ppv`. An expired claim is settled by `settle_credit_checkout`: credits restored under the SAME key `credit-checkout:<ref>:restore` (so route/webhook/sweeper can never restore twice), **only** if the ledger shows a spend since the claim and the video is not owned. `sweep_stale_credit_checkouts(limit)` settles all expired rows. Tests: `round4-credits-vote` "S2" (10): two concurrent partial = 1 debit + 1 session + 409, second tap gets the URL, concurrent full-credit, pay then retry = already_owned, expiry restores + frees, session create fails, debit fails, duplicate purchase rows, purchase lands between check and claim, crashed attempt settled once. SQL: test4 "S2" (11). **Flavor mode is not covered** (no "owned" concept; a crash between debit and session still has no pending row). |
+| 6 | **S3** `charge.dispute.closed`, merchant won | **FIXED** | Status `won` only: `pro_revenue_ledger.disputed_cents = 0` (same matching as item 2) and `dispute_won_for_payment` sets `token_reversals.dispute_tokens = 0`; tokens are **not** re-credited; if tokens had been clawed back a `money_exceptions` row `dispute_won_review` (deduped `dispute-won:<key>`, amount = tokens reversed) is written for a human. Lost/other statuses change nothing. Idempotent. Event added to the endpoint list below. Tests: `round4-webhook` "S3" (5) and SQL test4 "S3" (5). Known edge: `reversed` stays counted, so a refund that arrives AFTER a won dispute is topped up against what was already clawed back; and a `closed` that is processed before its `created` would be overwritten by the later `created` (Stripe sends them days apart, not handled). |
+| 7a | **F11** atomic RPCs for creator/wallet cashout, flavor/cashout, `lib/credits.ts` deduct/grant/autoRepay | **DEFERRED** (not started) | Needs its own design pass and RPCs with row locks like `send_live_gift`. |
+| 7b | **F18** RevenueCat refund clawback | **FIXED**; live payload **NOT VERIFIED** | `CANCELLATION` with `cancel_reason = CUSTOMER_SUPPORT` on a `hapi_tokens_<n>` product calls `reverse_tokens_for_payment` keyed `rc:<transaction_id>` (cap, partial + `money_exceptions` shortfall, replay-safe). No transaction id = 500 (RevenueCat retries; no guessed key). Field names follow RevenueCat's documented webhook format; I did not see a real refund event. Tests: `round4-revenuecat` (5). |
+| 7c | **F18** constant-time auth compare | **FIXED** | sha256 both sides + `timingSafeEqual`. Test: `round4-revenuecat` (1, five wrong/near-miss/longer/empty secrets). |
+| 7d | **F18** missing profile retried forever | **FIXED** | FK violation (`23503`) from the credit/clawback RPC is written to `money_exceptions` (`iap_unknown_user`, dedupe `iap-unknown-user:<event id>`), the event is completed and acknowledged (200). Any other DB error stays a 500. Tests: `round4-revenuecat` (2). |
+| 7e | `update_creator_streak` ambiguous `current_streak` | **FIXED** | `#variable_conflict use_column`, same body, `search_path` pinned, ACL re-asserted (migration §13). SQL test4 (3): runs, same-day twice, day-after extends to 7 with milestone `'7'`, still not callable by anon/authenticated. |
+
+## What is NOT VERIFIED (be honest)
+
+1. **Basil behaviour against real Stripe.** Nothing here ran against Stripe. Assumptions: the `invoice.paid` event body does **not** carry `payments` unless expanded; `GET /v1/invoice_payments?invoice=…` and `?payment[type]=payment_intent&payment[payment_intent]=…` return `data[].invoice` / `data[].payment.payment_intent` / `status`; `Stripe-Version: 2025-03-31.basil` is accepted per request.
+2. **The pinned SDK cannot do the lookup by itself.** `stripe@16.12.0` (package-lock) has no `rawRequest` and no `invoicePayments` resource. `lib/stripe-shapes.ts` therefore tries `rawRequest`, then `invoicePayments.list`, then a plain `fetch` to `api.stripe.com` with `STRIPE_SECRET_KEY` and the `Stripe-Version` header (read-only GET). On the pinned SDK it is the `fetch` path that runs. Unit tests exercise the SDK-resource path through a mock; the `fetch` path has **no automated test** and was never run. If you want it gone: bump `stripe` to a version with `rawRequest`, or pin the endpoint to a basil API version and the primary PI stamp covers everything except the one lookup at `invoice.paid` time.
+3. Real lock contention (items 3 and 5): single-connection PGlite only.
+4. The RevenueCat refund payload (item 7b).
+5. `npm run build` was **not** run (needs the Supabase env vars; unchanged from round 3).
+
+## Verification (run on the iMac, 2026-11-08)
+
+- `npx tsc --noEmit` -> **exit 0**.
+- `npx vitest run` -> **Test Files 15 passed (15), Tests 159 passed (159)** (112 before this round; +47 new in 3 files, `p0-833-round4-webhook` 23, `round4-credits-vote` 16, `round4-revenuecat` 8). `vitest.config.ts` now sets `STRIPE_SECRET_KEY=''` for tests so the `fetch` fallback can never fire.
+- **Fail-on-old:** the 5 changed source files + `stripe-shapes.ts` swapped back to `a63ebc0` and the 3 new test files re-run: **33 of 47 fail** (the other 14 are guard tests that pass on old code too: old-shape charge, unmatched no-op, lost dispute, free-vote path, non-refund cancellation, bad-secret 401s, etc.). Files restored afterwards.
+- SQL suite on real Postgres (PGlite, in memory), run from `supabase/sqltest/` (`npm test`): `test.mjs` **23/23**, `test3.mjs` **35/35**, `test4.mjs` **41/41**.
+- **Migration idempotent on a first-draft DB:** `test4.mjs` applies all older migrations, then the first draft (`git show 6b53e72:supabase/migrations/20261107_money_fixes_833.sql`, default `'processing'`, no `disputed_cents`), inserts a bare old-code row and a genuine in-flight claim, then applies the current migration **twice**: both pass, defaults flip to `completed`, the bare row is repaired (claim -> `duplicate`), the in-flight row is untouched, the CHECK exists exactly once. `test.mjs`/`test3.mjs` also apply it twice (and again with legacy-bad data) on top of all older migrations.
+- Same harness limits as round 3: 3 old migrations (`004_classes`, `20260711_academy`, `20260712_rls_hardening`) cannot apply in PGlite (dashboard-made tables); `course_enrollments` and `pro_payout_pool`/`pro_pool_earnings` are stubbed.
+
+## Production pre-checks for the new objects (read-only; run BEFORE applying the migration)
+
+```sql
+-- 1. nothing with these names exists yet (expect 0 rows / NULL)
+select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+ where n.nspname='public' and p.proname in ('cast_paid_vote','dispute_won_for_payment','claim_credit_checkout',
+   'peek_credit_checkout','settle_credit_checkout','release_credit_checkout','sweep_stale_credit_checkouts');
+select to_regclass('public.pending_credit_checkouts');
+
+-- 2. cast_paid_vote needs the unique key (entry_id, voter_id) on challenge_votes (ON CONFLICT target)
+select conname, pg_get_constraintdef(oid) from pg_constraint
+ where conrelid='public.challenge_votes'::regclass and contype in ('u','p');
+
+-- 3. column types the new functions assume
+select table_name, column_name, data_type, is_nullable from information_schema.columns
+ where (table_name='purchases'      and column_name in ('buyer_id','video_id','stripe_payment_intent_id','credit_funded'))
+    or (table_name='credit_ledger'  and column_name in ('reference_id','reference_type','created_at'))
+    or (table_name='pro_revenue_ledger' and column_name in ('stripe_payment_intent_id','disputed_cents'));
+--    expect purchases.video_id uuid, credit_ledger.reference_id text, created_at present.
+--    ALSO LOOK: purchases.stripe_payment_intent_id was NOT NULL + UNIQUE in 001_initial; the full-credit unlock
+--    inserts NULL. If prod still says is_nullable = NO, that unlock fails today (pre-existing, not touched).
+
+-- 4. the new column / index must not exist yet; no payment intent can collide (all rows start NULL)
+select indexname from pg_indexes where indexname='uq_pro_revenue_ledger_payment_intent';
+
+-- 5. S1: what the migration will repair
+select column_name, column_default from information_schema.columns
+ where table_name in ('stripe_events','iap_events') and column_name='status';           -- 'processing' = the first draft ran here
+select 'stripe_events' t, count(*) from public.stripe_events where status='processing' and lease_until is null and attempts=0
+union all select 'iap_events', count(*) from public.iap_events where status='processing' and lease_until is null and attempts=0;
+select count(*) from public.pro_revenue_ledger where disputed_cents < 0;               -- must be 0 (else the CHECK stays NOT VALID + WARNING)
+
+-- 6. update_creator_streak: current definition (the migration replaces it with the same body + #variable_conflict use_column)
+select pg_get_functiondef('public.update_creator_streak(uuid,text)'::regprocedure);
+
+-- 7. after applying: the 8 new/changed functions are service_role only (expect all false for authenticated, anon)
+select p.oid::regprocedure, has_function_privilege('authenticated', p.oid, 'execute') auth_can, has_function_privilege('anon', p.oid, 'execute') anon_can
+  from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+ where n.nspname='public' and p.proname in ('cast_paid_vote','dispute_won_for_payment','claim_credit_checkout','peek_credit_checkout',
+   'settle_credit_checkout','release_credit_checkout','sweep_stale_credit_checkouts','update_creator_streak');
+```
+
+## Marlowe / Kennedy — before or at deploy (round 4 additions)
+
+- Apply the migration BEFORE the code, as before (the webhook now calls `dispute_won_for_payment`, the routes call `cast_paid_vote`, `peek/claim/release_credit_checkout`; they 500 until the functions exist).
+- **Stripe Dashboard -> webhook endpoint -> events** (add `charge.dispute.closed`; full list now): `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.paid`, `invoice.payment_failed`, `charge.refunded`, `charge.dispute.created`, **`charge.dispute.closed`** (new), `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`.
+- `STRIPE_SECRET_KEY` must be set in the runtime (already needed everywhere): the basil lookup fallback reads it. Check the endpoint's **API version** in the Dashboard (still the open question from round 3): if it is pre-basil, the PI stamp is simply redundant; if basil, the stamp + lookup are what keeps refunds working.
+- **Schedule the sweeper** (not scheduled by this branch): `select public.sweep_stale_credit_checkouts(100);` every 15-30 min (pg_cron or a protected cron route using the service role). Without it a crashed checkout is still settled the next time that buyer touches that video, so it is a clean-up, not a correctness need.
+- Backfill reminder from round 3 still applies: old Pro invoices have no `stripe_payment_intent_id`; a refund of one of those falls back to the InvoicePayments lookup.
+
+## REMAINING (not done this round)
+
+- **F11** atomic cashout / wallet / `lib/credits.ts` deduct-grant-autoRepay (optimistic lock + separate ledger insert is still how credits are debited; the new pending row stops the double-debit race for PPV but not a crash between the optimistic update and the ledger insert).
+- Flavor partial-credit checkout has no pending row (crash between debit and session creation is unrecoverable there).
+- Schedule `sweep_stale_credit_checkouts`.
+- `goals/[id]/contribute` pause decision, `components/PauseStatus.tsx` caching, `wallet_add` reporting label (#17, #19) — unchanged from round 3.
+- Test for the `fetch` fallback in `lib/stripe-shapes.ts` (needs a network stub) — NOT VERIFIED above.
