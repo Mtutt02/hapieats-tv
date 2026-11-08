@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest) {
   try {
@@ -85,7 +86,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Paid course — create Stripe checkout
+    // Paid course — create Stripe checkout (free enrollment above is never paused)
+    const paused = paymentsPausedResponse()
+    if (paused) return paused
     const key = process.env.STRIPE_SECRET_KEY ?? ''
     if (!key || key.length < 20 || key.includes('placeholder')) {
       return NextResponse.json({
@@ -123,6 +126,7 @@ export async function POST(req: NextRequest) {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       success_url: `${safeSuccess}?enrolled=1`,
       cancel_url: safeCancel,
       line_items: [{

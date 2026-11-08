@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // Legacy token bundle options (kept for backward compat with live page)
 const TOKEN_BUNDLES: Record<string, { tokens: number; priceUsd: number; label: string }> = {
@@ -12,6 +13,8 @@ const TOKEN_BUNDLES: Record<string, { tokens: number; priceUsd: number; label: s
 }
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const key = process.env.STRIPE_SECRET_KEY ?? ''
   if (!key || key === 'sk_test_' || key.length < 20) {
     return NextResponse.json({
@@ -90,6 +93,7 @@ export async function POST(req: NextRequest) {
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     success_url: successUrl ?? `${process.env.NEXT_PUBLIC_APP_URL}/live?tokens=purchased`,
     cancel_url: cancelUrl ?? `${process.env.NEXT_PUBLIC_APP_URL}/live`,
     line_items: [

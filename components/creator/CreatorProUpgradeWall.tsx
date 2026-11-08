@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Radio, Check, Zap, BarChart2, Headphones, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 const FEATURES = [
   { icon: Radio,      text: 'Go live anytime — browser-based, no software needed' },
@@ -15,6 +16,7 @@ const FEATURES = [
 ]
 
 export default function CreatorProUpgradeWall() {
+  const { paymentsPaused } = usePauseStatus()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -91,7 +93,7 @@ export default function CreatorProUpgradeWall() {
         <div className="space-y-3">
           <Button
             onClick={handleUpgrade}
-            disabled={loading}
+            disabled={loading || paymentsPaused}
             className="w-full bg-red-600 hover:bg-red-500 text-white font-bold h-12 text-base"
           >
             {loading ? 'Redirecting to checkout…' : 'Upgrade to Creator Pro →'}

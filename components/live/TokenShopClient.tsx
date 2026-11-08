@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Zap } from 'lucide-react'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 const BUNDLES = [
   { id: 'starter', tokens: 100, priceUsd: 1.99, label: 'Starter', tag: null },
@@ -12,6 +13,7 @@ const BUNDLES = [
 ]
 
 export default function TokenShopClient() {
+  const { paymentsPaused } = usePauseStatus()
   const [loading, setLoading] = useState<string | null>(null)
   const [globalError, setGlobalError] = useState<string | null>(null)
 
@@ -72,7 +74,7 @@ export default function TokenShopClient() {
             <Button
               className="w-full gap-2"
               onClick={() => handleBuy(b.id)}
-              disabled={loading === b.id}
+              disabled={loading === b.id || paymentsPaused}
             >
               <Zap className="h-4 w-4" />
               {loading === b.id ? 'Redirecting…' : `Buy ${b.tokens.toLocaleString()} Tokens`}

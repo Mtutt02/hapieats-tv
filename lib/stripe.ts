@@ -44,6 +44,7 @@ export async function createCheckoutSession(opts: CreateCheckoutOptions) {
     return stripe.checkout.sessions.create({
       ...baseParams,
       mode: 'subscription',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       line_items: [{ price: opts.stripePriceId!, quantity: 1 }],
       subscription_data: {
         metadata: {
@@ -58,6 +59,7 @@ export async function createCheckoutSession(opts: CreateCheckoutOptions) {
     return stripe.checkout.sessions.create({
       ...baseParams,
       mode: 'payment',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       line_items: [
         {
           price_data: {
@@ -75,6 +77,7 @@ export async function createCheckoutSession(opts: CreateCheckoutOptions) {
   return stripe.checkout.sessions.create({
     ...baseParams,
     mode: 'subscription',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     line_items: [
       { price: process.env.NEXT_PUBLIC_STRIPE_PLATFORM_PRICE_ID!, quantity: 1 },
     ],

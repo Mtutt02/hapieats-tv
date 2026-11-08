@@ -1,20 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // ── POST /api/live/gift ────────────────────────────────────────────────────────
 // Send a gift during a live stream.
-// Body: { stream_id: string, gift_id: string, quantity?: number }
+// Body: { stream_id: string, gift_id: string, quantity?: number, request_id?: string }
 //
 // Flow:
 //  1. Auth + validate input
-//  2. Verify stream is active + get creator_id (NEVER from client)
-//  3. Fetch gift definition from live_gifts table (NOT hardcoded)
-//  4. Debit sender via record_token_movement RPC (atomic, SELECT FOR UPDATE)
-//  5. Insert live_gift_transactions row
-//  6. Credit creator_wallets (tokens_received + monetary earnings)
-//  7. Post gift_event message to live_chat_messages
+//  2. send_live_gift RPC does EVERYTHING that moves money in one transaction, under a
+//     row lock on the sender's wallet: verifies the stream is live and who owns it (never
+//     from the client), reads the gift price from live_gifts (never from the client), debits
+//     the sender (never below zero), records the transaction, credits the creator wallet and
+//     the circle pool. Any failure rolls the whole thing back.
+//  3. Post gift_event message to live_chat_messages (best effort)
+//
+// Double-submit safety: the client sends a request_id per gift tap and reuses it for a retry.
+// The same (sender, request_id) is charged once; a replay returns the original result.
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -22,7 +29,7 @@ export async function POST(req: NextRequest) {
   const rl = checkRateLimit(`${user.id}:live-gift`, 15, 60_000)
   if (!rl.allowed) return NextResponse.json({ error: 'Too many gifts — slow down a moment.' }, { status: 429 })
 
-  let body: { stream_id: string; gift_id: string; quantity?: number }
+  let body: { stream_id: string; gift_id: string; quantity?: number; request_id?: string }
   try {
     body = await req.json()
   } catch {
@@ -36,187 +43,73 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
     return NextResponse.json({ error: 'quantity must be between 1 and 10' }, { status: 400 })
   }
+  // A client that sends no request_id still works, it just gets no replay protection.
+  const requestId =
+    typeof body.request_id === 'string' && body.request_id.length > 0 && body.request_id.length <= 100
+      ? body.request_id
+      : randomUUID()
 
   const service = createServiceClient()
 
-  // ── Verify stream is live ──────────────────────────────────────────────────
-  const { data: stream } = await service
-    .from('live_streams')
-    .select('id, creator_id, status, title')
-    .eq('id', stream_id)
-    .single()
-
-  if (!stream) return NextResponse.json({ error: 'Stream not found' }, { status: 404 })
-  if (stream.status === 'ended') {
-    return NextResponse.json({ error: 'Stream has ended' }, { status: 400 })
-  }
-  if (stream.creator_id === user.id) {
-    return NextResponse.json({ error: 'Cannot send gifts to your own stream' }, { status: 400 })
-  }
-
-  // ── Fetch gift definition from DB (never trust client-supplied cost) ───────
-  const { data: gift } = await service
-    .from('live_gifts')
-    .select('id, name, emoji, token_cost, creator_pct, platform_pct, circle_pct')
-    .eq('id', gift_id)
-    .eq('is_active', true)
-    .single()
-
-  if (!gift) return NextResponse.json({ error: 'Gift not found or unavailable' }, { status: 404 })
-
-  const totalTokens = gift.token_cost * quantity
-
-  // ── Debit sender tokens (atomic — SELECT FOR UPDATE inside RPC) ────────────
-  const { error: debitErr } = await service.rpc('record_token_movement', {
-    p_user_id:      user.id,
-    p_type:         'live_gift',
-    p_amount:       -totalTokens,
-    p_related_user: stream.creator_id,
-    p_description:  `Sent ${quantity > 1 ? `${quantity}x ` : ''}${gift.emoji} ${gift.name} on "${stream.title}"`,
-    p_metadata:     { stream_id, gift_id, quantity },
+  const { data: result, error } = await service.rpc('send_live_gift', {
+    p_request_id: requestId,
+    p_sender_id:  user.id,
+    p_stream_id:  stream_id,
+    p_gift_id:    gift_id,
+    p_quantity:   quantity,
   })
 
-  if (debitErr) {
-    if (debitErr.message?.includes('INSUFFICIENT_BALANCE')) {
-      return NextResponse.json(
-        { error: 'Not enough tokens', code: 'INSUFFICIENT_BALANCE' },
-        { status: 402 }
-      )
+  if (error) {
+    const msg = error.message ?? ''
+    if (msg.includes('INSUFFICIENT_BALANCE')) {
+      return NextResponse.json({ error: 'Not enough tokens', code: 'INSUFFICIENT_BALANCE' }, { status: 402 })
     }
-    console.error('[live/gift] debit error:', debitErr)
-    return NextResponse.json({ error: 'Failed to deduct tokens' }, { status: 500 })
+    if (msg.includes('STREAM_NOT_FOUND'))  return NextResponse.json({ error: 'Stream not found' }, { status: 404 })
+    if (msg.includes('STREAM_ENDED'))      return NextResponse.json({ error: 'Stream has ended' }, { status: 400 })
+    if (msg.includes('OWN_STREAM'))        return NextResponse.json({ error: 'Cannot send gifts to your own stream' }, { status: 400 })
+    if (msg.includes('GIFT_UNAVAILABLE'))  return NextResponse.json({ error: 'Gift not found or unavailable' }, { status: 404 })
+    console.error('[live/gift] send_live_gift error:', error)
+    return NextResponse.json({ error: 'Could not send the gift — you were not charged' }, { status: 500 })
   }
 
-  // ── Get updated sender balance ─────────────────────────────────────────────
-  const { data: walletAfter } = await service
-    .from('hapi_tokens')
-    .select('balance')
-    .eq('user_id', user.id)
-    .single()
+  const isNew = result?.status === 'ok'
 
-  // ── Fetch token→cents conversion rate ─────────────────────────────────────
-  const { data: settings } = await service
-    .from('platform_settings')
-    .select('value')
-    .eq('key', 'token_conversion_rate')
-    .single()
-  const rate           = (settings?.value as { creator_pct?: number; cents_per_token?: number } | null) ?? {}
-  const centsPerToken  = rate.cents_per_token ?? 1
-  // Flooring all three shares independently loses the remainder: at a 70/20/10
-  // split a 25-token gift credits 17+5+2 = 24 of 25 cents, and a 1-token gift
-  // credits nobody at all. Floor the first two and give the remainder to the
-  // circle pool so the three shares always sum to exactly what was debited.
-  const totalCents     = Math.round(totalTokens * centsPerToken)
-  const creatorCents   = Math.floor(totalCents * (gift.creator_pct  / 100))
-  const platformCents  = Math.floor(totalCents * (gift.platform_pct / 100))
-  const circleCents    = totalCents - creatorCents - platformCents
-
-  // ── Record gift transaction ────────────────────────────────────────────────
-  const { data: txn } = await service
-    .from('live_gift_transactions')
-    .insert({
-      sender_id:            user.id,
-      recipient_id:         stream.creator_id,
-      stream_id,
-      gift_id,
-      quantity,
-      total_tokens:         totalTokens,
-      creator_earned_cents: creatorCents,
-      platform_fee_cents:   platformCents,
-      circle_pool_cents:    circleCents,
-    })
-    .select('id')
-    .single()
-
-  // ── Credit creator wallet (atomic via wallet_add RPC) ─────────────────────
-  const month = new Date().toISOString().slice(0, 7)
-
-  const { error: walletAddErr } = await service.rpc('wallet_add', {
-    p_creator_id: stream.creator_id,
-    p_tokens:     totalTokens,
-    p_cents:      creatorCents,
-  })
-
-  if (walletAddErr) {
-    // Fallback: wallet_add migration not applied yet (function not found) —
-    // use the legacy read-then-upsert path so credits are never dropped.
-    console.error('[live/gift] wallet_add RPC failed, falling back to upsert:', walletAddErr)
-
-    await service.rpc('ensure_creator_wallet', { p_creator_id: stream.creator_id })
-
-    const { data: cw } = await service
-      .from('creator_wallets')
-      .select('tokens_received, redeemable_cents, lifetime_earnings_cents, monthly_earnings')
-      .eq('creator_id', stream.creator_id)
-      .single()
-
-    const monthly = ((cw?.monthly_earnings as Record<string, Record<string, number>> | null) ?? {})
-    monthly[month] = monthly[month] ?? { gifts: 0, challenges: 0, goals: 0, circle: 0 }
-    monthly[month].gifts = (monthly[month].gifts ?? 0) + creatorCents
-
-    await service.from('creator_wallets').upsert({
-      creator_id:              stream.creator_id,
-      tokens_received:         (cw?.tokens_received          ?? 0) + totalTokens,
-      redeemable_cents:        (cw?.redeemable_cents          ?? 0) + creatorCents,
-      lifetime_earnings_cents: (cw?.lifetime_earnings_cents   ?? 0) + creatorCents,
-      monthly_earnings:        monthly,
-      updated_at:              new Date().toISOString(),
-    }, { onConflict: 'creator_id' })
-  }
-
-  // ── Credit Creator Circle Pool (same flow as /api/tokens/send-gift) ───────
-  if (circleCents > 0) {
-    const poolMonth = month
-    const { data: pool } = await service
-      .from('creator_circle_pool')
-      .select('id, total_cents')
-      .eq('month', poolMonth)
-      .single()
-    if (pool) {
-      await service
-        .from('creator_circle_pool')
-        .update({ total_cents: pool.total_cents + circleCents })
-        .eq('month', poolMonth)
-    } else {
-      await service
-        .from('creator_circle_pool')
-        .insert({ month: poolMonth, total_cents: circleCents })
+  if (isNew) {
+    // ── Update creator streak (best effort) ──────────────────────────────────
+    try {
+      await service.rpc('update_creator_streak', {
+        p_creator_id:    result.creator_id,
+        p_activity_type: 'gift_received',
+      })
+    } catch (e) {
+      console.error('[live/gift] streak update failed (non-fatal):', e)
     }
-  }
 
-  // ── Update creator streak ──────────────────────────────────────────────────
-  try {
-    await service.rpc('update_creator_streak', {
-      p_creator_id:    stream.creator_id,
-      p_activity_type: 'gift_received',
-    })
-  } catch (e) {
-    console.error('[live/gift] streak update failed (non-fatal):', e)
-  }
-
-  // ── Post gift_event to live chat (Realtime picks it up for all viewers) ────
-  try {
-    await service.from('live_chat_messages').insert({
-      stream_id,
-      sender_id:   user.id,
-      message:     `sent ${quantity > 1 ? `${quantity}x ` : ''}${gift.emoji} ${gift.name}`,
-      type:        'gift_event',
-      gift_name:   gift.name,
-      gift_emoji:  gift.emoji,
-      gift_tokens: totalTokens,
-      is_private:  false,
-    })
-  } catch (e) {
-    console.error('[live/gift] gift chat message failed (non-fatal):', e)
+    // ── Post gift_event to live chat (Realtime picks it up for all viewers) ──
+    try {
+      await service.from('live_chat_messages').insert({
+        stream_id,
+        sender_id:   user.id,
+        message:     `sent ${quantity > 1 ? `${quantity}x ` : ''}${result.gift.emoji} ${result.gift.name}`,
+        type:        'gift_event',
+        gift_name:   result.gift.name,
+        gift_emoji:  result.gift.emoji,
+        gift_tokens: result.total_tokens,
+        is_private:  false,
+      })
+    } catch (e) {
+      console.error('[live/gift] gift chat message failed (non-fatal):', e)
+    }
   }
 
   return NextResponse.json({
     success:           true,
-    transaction_id:    txn?.id ?? null,
-    gift:              { name: gift.name, emoji: gift.emoji, token_cost: gift.token_cost },
-    tokens_spent:      totalTokens,
-    remaining_balance: walletAfter?.balance ?? null,
-    creator_earned:    { tokens: totalTokens, cents: creatorCents },
+    duplicate:         !isNew,
+    transaction_id:    result?.transaction_id ?? null,
+    gift:              result?.gift,
+    tokens_spent:      result?.total_tokens,
+    remaining_balance: result?.remaining_balance ?? null,
+    creator_earned:    { tokens: result?.total_tokens, cents: result?.creator_cents },
   })
 }
 

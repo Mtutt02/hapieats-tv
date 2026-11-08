@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -40,38 +41,52 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     finalTokensSpent = Math.max(tokens_to_spend, challenge.token_vote_cost ?? 0)
   }
 
-  // Deduct tokens if needed
+  // Paid vote: the debit and the vote row are ONE transaction (cast_paid_vote). The wallet
+  // row is locked, the vote is inserted under the unique key (entry_id, voter_id), and tokens
+  // are debited only if that insert happened - so a double tap or a retry charges once.
   if (finalTokensSpent > 0) {
-    const { data: wallet } = await service.from('hapi_tokens').select('balance').eq('user_id', user.id).single()
-    if (!wallet || wallet.balance < finalTokensSpent) {
-      return NextResponse.json({ error: 'Insufficient tokens', balance: wallet?.balance ?? 0 }, { status: 402 })
-    }
+    // Spending purchased tokens follows the purchase pause (like goal contributions).
+    // Free votes are not payments and keep working.
+    const paused = paymentsPausedResponse()
+    if (paused) return paused
 
-    const { error: debitErr } = await service.rpc('record_token_movement', {
+    const { data: cast, error: castErr } = await service.rpc('cast_paid_vote', {
       p_user_id: user.id,
-      p_type: 'challenge_vote',
-      p_amount: -finalTokensSpent,
-      p_description: `Voted on challenge entry`,
-      p_metadata: { challenge_id: params.id, entry_id },
+      p_challenge_id: params.id,
+      p_entry_id: entry_id,
+      p_cost: finalTokensSpent,
     })
-    if (debitErr) {
-    if (debitErr.message?.includes('INSUFFICIENT_BALANCE')) {
-      return NextResponse.json({ error: 'Insufficient tokens' }, { status: 402 })
+    if (castErr) {
+      if (castErr.message?.includes('INSUFFICIENT_BALANCE')) {
+        const { data: wallet } = await service.from('hapi_tokens').select('balance').eq('user_id', user.id).limit(1)
+        return NextResponse.json({ error: 'Insufficient tokens', balance: wallet?.[0]?.balance ?? 0 }, { status: 402 })
+      }
+      if (castErr.message?.includes('ENTRY_NOT_VOTABLE')) {
+        return NextResponse.json({ error: 'Entry not found or not approved' }, { status: 404 })
+      }
+      console.error('[challenges/vote] cast_paid_vote failed:', castErr)
+      return NextResponse.json({ error: 'Could not record your vote' }, { status: 500 })
     }
-    return NextResponse.json({ error: 'Failed to deduct tokens' }, { status: 500 })
-  }
+    if (cast?.status === 'duplicate') {
+      // Already voted on this entry: nothing was charged.
+      return NextResponse.json({ success: true, duplicate: true, tokens_spent: 0 })
+    }
+    return NextResponse.json({ success: true, vote: { id: cast?.vote_id, entry_id, voter_id: user.id, tokens_spent: finalTokensSpent }, tokens_spent: finalTokensSpent })
   }
 
-  // Record the vote (upsert to prevent double voting)
-  const { data: vote, error: voteErr } = await service.from('challenge_votes').upsert({
+  // Free vote (upsert to prevent double voting)
+  const { data: voteRows, error: voteErr } = await service.from('challenge_votes').upsert({
     entry_id,
     voter_id: user.id,
-    tokens_spent: finalTokensSpent,
-  }, { onConflict: 'entry_id,voter_id', ignoreDuplicates: true }).select().single()
+    tokens_spent: 0,
+  }, { onConflict: 'entry_id,voter_id', ignoreDuplicates: true }).select()
 
   if (voteErr) {
     return NextResponse.json({ error: voteErr.message }, { status: 500 })
   }
+  if (!voteRows || voteRows.length === 0) {
+    return NextResponse.json({ success: true, duplicate: true, tokens_spent: 0 })
+  }
 
-  return NextResponse.json({ success: true, vote, tokens_spent: finalTokensSpent })
+  return NextResponse.json({ success: true, vote: voteRows[0], tokens_spent: 0 })
 }

@@ -16,10 +16,13 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { isProMember } from '@/lib/academy/pro'
 import { PRO_PRICE_USD } from '@/lib/academy/types'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: 'Payments not configured' }, { status: 503 })
   }
@@ -71,6 +74,7 @@ export async function POST(req: NextRequest) {
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     line_items: [lineItem],
     success_url: `${appOrigin}/settings?pro=1`,
     cancel_url: `${appOrigin}/tokens`,

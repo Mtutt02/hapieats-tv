@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type Stripe from 'stripe'
 import { stripe } from '@/lib/stripe'
+import { currentPeriodEndIso, currentPeriodStartIso } from '@/lib/stripe-shapes'
 
 /** True if the user has an active/trialing Pro subscription. Delegates to the is_pro_member RPC. */
 export async function isProMember(service: SupabaseClient, userId: string): Promise<boolean> {
@@ -21,10 +22,6 @@ export async function isProMember(service: SupabaseClient, userId: string): Prom
   return data === true
 }
 
-function periodToIso(sec: number | null | undefined): string | null {
-  if (!sec || typeof sec !== 'number') return null
-  return new Date(sec * 1000).toISOString()
-}
 
 /**
  * checkout.session.completed handler for Pro.
@@ -53,8 +50,9 @@ export async function handleProCheckoutCompleted(
   if (subId) {
     try {
       const sub = await stripe.subscriptions.retrieve(subId)
-      periodStart = periodToIso((sub as any).current_period_start)
-      periodEnd = periodToIso((sub as any).current_period_end)
+      // basil moved the period to the subscription item: the helpers read both shapes
+      periodStart = currentPeriodStartIso(sub)
+      periodEnd = currentPeriodEndIso(sub)
     } catch {
       // Non-fatal — customer.subscription.updated will fill the period in.
     }
@@ -74,7 +72,8 @@ export async function handleProCheckoutCompleted(
       },
       { onConflict: 'user_id' },
     )
-  if (error) console.error('[academy/pro] pro_subscriptions upsert error:', error)
+  // Throw so the Stripe webhook fails the event and Stripe retries it.
+  if (error) throw new Error(`pro_subscriptions upsert: ${error.message}`)
 }
 
 /**
@@ -98,10 +97,11 @@ export async function handleProSubscriptionEvent(
     .update({
       status: safeStatus,
       stripe_customer_id: (subscription.customer as string) ?? null,
-      current_period_start: periodToIso((subscription as any).current_period_start),
-      current_period_end: periodToIso((subscription as any).current_period_end),
+      // Only overwrite the stored period when Stripe sent one (neither shape => keep the old value)
+      ...(currentPeriodStartIso(subscription) ? { current_period_start: currentPeriodStartIso(subscription) } : {}),
+      ...(currentPeriodEndIso(subscription) ? { current_period_end: currentPeriodEndIso(subscription) } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('stripe_subscription_id', subId)
-  if (error) console.error('[academy/pro] pro_subscriptions update error:', error)
+  if (error) throw new Error(`pro_subscriptions update: ${error.message}`)
 }

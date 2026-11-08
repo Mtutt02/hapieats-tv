@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest) {
   try {
+    const paused = paymentsPausedResponse()
+    if (paused) return paused
     // Guard: Stripe must be configured
     const stripeKey = process.env.STRIPE_SECRET_KEY ?? ''
     if (!stripeKey || stripeKey.length < 20 || stripeKey.includes('placeholder')) {
@@ -97,6 +100,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'subscription',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [{ price: channelRecord.stripe_price_id, quantity: 1 }],
         subscription_data: {
           metadata: { userId: user.id, channelId },
@@ -119,6 +123,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'payment',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [
           {
             price_data: {
@@ -139,6 +144,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'subscription',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [
           {
             price_data: {

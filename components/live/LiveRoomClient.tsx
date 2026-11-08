@@ -5,6 +5,7 @@ import MuxPlayer from '@mux/mux-player-react'
 import { createClient } from '@/lib/supabase/client'
 import { Send, Gift, Lock, StopCircle, Users, Radio, X, ChevronRight, UserX, Flag } from 'lucide-react'
 import Link from 'next/link'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -118,7 +119,10 @@ export default function LiveRoomClient({
   const [sendingChat, setSendingChat]     = useState(false)
   const [showGifts, setShowGifts]         = useState(false)
   const [tokenBalance, setTokenBalance]   = useState(initialTokenBalance)
+  const { paymentsPaused } = usePauseStatus()
   const [sendingGift, setSendingGift]     = useState<string | null>(null)
+  // One request id per gift tap, reused if the same tap is submitted again, so the server charges it once.
+  const giftRequestIds = useRef<Record<string, string>>({})
   const [streamStatus, setStreamStatus]   = useState(stream.status)
   const [viewerCount, setViewerCount]     = useState(stream.status === 'active' ? 1 : 0)
   const [giftToast, setGiftToast]         = useState<string | null>(null)
@@ -260,12 +264,14 @@ export default function LiveRoomClient({
       return
     }
     setSendingGift(gift.id)
+    const requestId = (giftRequestIds.current[gift.id] ??= crypto.randomUUID())
     try {
       const res = await fetch('/api/live/gift', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ stream_id: stream.id, gift_id: gift.id }),
+        body:    JSON.stringify({ stream_id: stream.id, gift_id: gift.id, request_id: requestId }),
       })
+      delete giftRequestIds.current[gift.id] // got an answer: the next tap is a new gift
       if (res.ok) {
         const data = await res.json()
         setTokenBalance(data.remaining_balance ?? tokenBalance - gift.token_cost)
@@ -592,7 +598,7 @@ export default function LiveRoomClient({
                     <button
                       key={gift.id}
                       onClick={() => sendGift(gift)}
-                      disabled={!!sendingGift || !canAfford}
+                      disabled={!!sendingGift || !canAfford || paymentsPaused}
                       className={[
                         'flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center',
                         canAfford && !sendingGift

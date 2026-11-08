@@ -14,8 +14,11 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
 import { getCreditBalance } from '@/lib/credits'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -80,6 +83,7 @@ export async function POST(req: NextRequest) {
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     success_url: safeUrl(successUrl, `${appOrigin}/studio/credits?repaid=true`),
     cancel_url: safeUrl(cancelUrl, `${appOrigin}/studio/credits`),
     line_items: [

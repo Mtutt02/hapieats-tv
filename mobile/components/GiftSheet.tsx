@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Modal, FlatList, ActivityIndicator, Alert } from 'react-native'
 import { apiPost } from '@/lib/api'
 import { colors, radius } from '@/lib/theme'
@@ -23,18 +23,24 @@ interface Props {
 
 export default function GiftSheet({ visible, onClose, streamId, gifts, balance, onSent, onNeedTokens }: Props) {
   const [sending, setSending] = useState<string | null>(null)
+  // One request id per gift tap, reused if the same tap is submitted twice: the server charges it once.
+  const requestIds = useRef<Record<string, string>>({})
 
   const send = async (gift: LiveGift) => {
     if (balance < gift.token_cost) {
       onNeedTokens()
       return
     }
+    if (sending) return
     setSending(gift.id)
+    const requestId = (requestIds.current[gift.id] ??= `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`)
     const res = await apiPost<GiftResponse>('/api/live/gift', {
       stream_id: streamId,
       gift_id: gift.id,
       quantity: 1,
+      request_id: requestId,
     })
+    if (res.status !== 0) delete requestIds.current[gift.id] // got an answer: the next tap is a new gift
     setSending(null)
     if (!res.ok) {
       if (res.status === 402) onNeedTokens()

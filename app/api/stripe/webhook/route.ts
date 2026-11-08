@@ -3,10 +3,91 @@ import { headers } from 'next/headers'
 import { stripe } from '@/lib/stripe'
 import { createServiceClient } from '@/lib/supabase/server'
 import Stripe from 'stripe'
-import { getCreditBalance } from '@/lib/credits'
 import { handleProCheckoutCompleted, handleProSubscriptionEvent } from '@/lib/academy/pro'
+import {
+  chargeDirectInvoiceId,
+  currentPeriodEndIso,
+  invoiceIdForPaymentIntent,
+  invoicePaymentIntentFromApi,
+  invoicePaymentIntentId,
+  invoiceSubscriptionId,
+  invoiceSubscriptionMetadata,
+  invoiceTaxCents,
+} from '@/lib/stripe-shapes'
 
 export const runtime = 'nodejs'
+
+const LEASE_SECONDS = 120
+
+/** A failed write must fail the event so Stripe retries it. */
+function must(error: { message?: string } | null | undefined, what: string) {
+  if (error) throw new Error(`${what}: ${error.message ?? 'database error'}`)
+}
+
+/**
+ * Write a refund / dispute amount onto the Pro revenue ledger row a charge paid. Matching order:
+ *   1. charge.invoice (API versions before basil), by stripe_invoice_id
+ *   2. the payment intent stamped on the row at invoice.paid, by stripe_payment_intent_id
+ *      (basil: the charge no longer names its invoice)
+ *   3. last resort: InvoicePayments lookup of the invoice for this payment intent
+ * No match anywhere is a no-op: the charge is not a Pro invoice (tokens, PPV, ...). Amounts are
+ * absolute values from Stripe, so a replay changes nothing. Returns whether a row was updated.
+ */
+async function patchProLedger(
+  supabase: ReturnType<typeof createServiceClient>,
+  charge: Stripe.Charge,
+  patch: { refunded_cents: number } | { disputed_cents: number },
+  eventType: string,
+): Promise<boolean> {
+  const pi = typeof charge.payment_intent === 'string'
+    ? charge.payment_intent
+    : (charge.payment_intent as { id?: string } | null)?.id ?? null
+  const touch = async (column: 'stripe_invoice_id' | 'stripe_payment_intent_id', value: string) => {
+    const { data, error } = await supabase
+      .from('pro_revenue_ledger')
+      .update(patch)
+      .eq(column, value)
+      .select('stripe_invoice_id')
+    must(error, 'pro revenue refund/dispute')
+    return (data?.length ?? 0) > 0
+  }
+
+  const direct = chargeDirectInvoiceId(charge)
+  if (direct && (await touch('stripe_invoice_id', direct))) return true
+  if (pi && (await touch('stripe_payment_intent_id', pi))) return true
+  if (!direct && pi) {
+    let looked: string | null = null
+    try {
+      looked = await invoiceIdForPaymentIntent(stripe, pi)
+    } catch (err) {
+      // Lookup unavailable: do not fail the whole event (the token reversal that follows must
+      // still run). The charge stays unmatched and is logged.
+      console.error(`[stripe/webhook] ${eventType}: InvoicePayments lookup failed for ${pi}:`, err)
+    }
+    if (looked && (await touch('stripe_invoice_id', looked))) return true
+  }
+  return false
+}
+
+/**
+ * Free the pending_credit_checkouts claim of a partial-credit PPV checkout. Best effort and keyed
+ * by checkoutRef (older sessions have none: nothing to release): an unreleased claim only expires
+ * and is settled, and settling is safe because it restores under the same key as everything else.
+ */
+async function releaseCreditClaim(
+  supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  videoId: string | undefined,
+  checkoutRef: string | undefined,
+) {
+  if (!videoId || !checkoutRef) return
+  try {
+    const { error } = await supabase.rpc('release_credit_checkout', { p_buyer: userId, p_video: videoId, p_ref: checkoutRef })
+    if (error) console.error('[stripe/webhook] could not release the credit checkout claim (it will expire):', error)
+  } catch (err) {
+    console.error('[stripe/webhook] could not release the credit checkout claim (it will expire):', err)
+  }
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -29,68 +110,93 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
   }
 
+  // NOTE: webhooks are deliberately NOT subject to PAYMENTS_PAUSED — in-flight
+  // payments must still complete.
   const supabase = createServiceClient()
 
-  // ── Idempotency claim ──────────────────────────────────────────────────────
-  // Claim the event id before fulfilling it, so two concurrent deliveries can't
-  // both fulfil. If fulfilment throws, the claim is released and Stripe's retry
-  // runs the event again. A claim that stays in place means it was fulfilled.
-  // A 23505 means another delivery already claimed it. Any other insert error
-  // (table missing pre-migration, transient DB issue) never blocks processing.
-  let claimed = false
-  try {
-    const { error: idempotencyErr } = await supabase
-      .from('stripe_events')
-      .insert({ id: event.id, type: event.type })
-
-    if (idempotencyErr) {
-      if (idempotencyErr.code === '23505') {
-        console.log(`[stripe/webhook] duplicate event ${event.id} (${event.type}) — already processed, skipping`)
-        return NextResponse.json({ received: true, duplicate: true })
-      }
-      console.error('[stripe/webhook] stripe_events insert error (continuing):', idempotencyErr)
-    } else {
-      claimed = true
-    }
-  } catch (err) {
-    console.error('[stripe/webhook] stripe_events guard threw (continuing):', err)
+  // ── Two-phase event record ─────────────────────────────────────────────────
+  // claim_stripe_event (see 20261107_money_fixes_833.sql) atomically returns:
+  //   'claimed'   - we hold a 2 minute lease and must fulfil (new event, or a stale
+  //                 'processing' row whose lease expired, i.e. a crashed delivery)
+  //   'duplicate' - already completed: 200, nothing to do
+  //   'busy'      - another delivery is mid-flight: 409 so Stripe retries later
+  // Any other outcome (including a DB error) is a 500 — never "continue anyway".
+  // The event is marked completed only after every side effect committed, and
+  // every side effect below is idempotent on its own, so a retry (after a crash,
+  // a lost response or a lease takeover) can never apply anything twice.
+  const { data: claim, error: claimErr } = await supabase.rpc('claim_stripe_event', {
+    p_id: event.id,
+    p_type: event.type,
+    p_lease_seconds: LEASE_SECONDS,
+  })
+  if (claimErr) {
+    console.error('[stripe/webhook] claim_stripe_event failed:', claimErr)
+    return NextResponse.json({ error: 'Could not record event' }, { status: 500 })
+  }
+  if (claim === 'duplicate') {
+    console.log(`[stripe/webhook] duplicate event ${event.id} (${event.type}) — already completed, skipping`)
+    return NextResponse.json({ received: true, duplicate: true })
+  }
+  if (claim === 'busy') {
+    console.log(`[stripe/webhook] event ${event.id} (${event.type}) is being processed by another delivery`)
+    return NextResponse.json({ error: 'Event in progress' }, { status: 409 })
+  }
+  if (claim !== 'claimed') {
+    console.error('[stripe/webhook] unexpected claim result:', claim)
+    return NextResponse.json({ error: 'Could not record event' }, { status: 500 })
   }
 
   try {
     switch (event.type) {
-      // ── Pay-per-view completed ────────────────────────────────────────────────
-      case 'checkout.session.completed': {
+      // Fulfilment runs ONLY once the money is in. With a delayed payment method
+      // (ACH / bank debit) `completed` arrives with payment_status 'unpaid'; the
+      // buyer must not get the item then. `async_payment_succeeded` re-enters this
+      // same path later (every effect below is idempotent), and
+      // `async_payment_failed` goes to the restore case. 'no_payment_required' is
+      // a zero-amount session (nothing to collect), so it fulfils immediately.
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session
-        const { userId, checkoutMode, videoId, channelId } = session.metadata ?? {}
+        if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+          console.log(`[stripe/webhook] ${event.type} ${session.id}: payment_status=${session.payment_status} — not fulfilling until paid`)
+          break
+        }
+        const { userId, checkoutMode, videoId } = session.metadata ?? {}
 
         // HapiEats Pro all-access subscription
         if (session.metadata?.kind === 'pro_subscription') {
           await handleProCheckoutCompleted(supabase, session)
         }
 
+        // Pay-per-view. Unique (buyer_id, video_id): a replay is a no-op.
         if (checkoutMode === 'pay_per_view' && videoId && userId) {
-          const { error: purchaseErr } = await supabase.from('purchases').upsert({
-            buyer_id: userId,
-            video_id: videoId,
-            stripe_payment_intent_id: session.payment_intent as string,
-            amount: session.amount_total ?? 0,
-          })
-          if (purchaseErr) throw purchaseErr
+          const { error } = await supabase.from('purchases').upsert(
+            {
+              buyer_id: userId,
+              video_id: videoId,
+              stripe_payment_intent_id: session.payment_intent as string,
+              amount: session.amount_total ?? 0,
+            },
+            { onConflict: 'buyer_id,video_id', ignoreDuplicates: true },
+          )
+          must(error, 'ppv purchase')
         }
 
         if (checkoutMode === 'platform_subscription' && userId) {
-          await supabase.from('profiles').update({
+          const { error } = await supabase.from('profiles').update({
             platform_subscription_id: session.subscription as string,
             platform_subscription_status: 'active',
           }).eq('id', userId)
+          must(error, 'platform subscription')
         }
 
-        // Token purchase — credit hapi_tokens wallet + ledger
+        // Token purchase — wallet credit + ledger + legacy mirror in ONE transaction,
+        // keyed by the Stripe session so it can only ever apply once.
         if (checkoutMode === 'token_purchase' && userId) {
           const tokenAmount = parseInt(session.metadata?.tokenAmount ?? '0', 10)
           if (tokenAmount > 0) {
-            // Use new hapi_tokens table (upsert wallet, record ledger)
-            const { error: walletErr } = await supabase.rpc('record_token_movement', {
+            const { error } = await supabase.rpc('credit_tokens_once', {
+              p_key: `stripe:session:${session.id}:tokens`,
               p_user_id: userId,
               p_type: 'purchase',
               p_amount: tokenAmount,
@@ -101,65 +207,36 @@ export async function POST(req: NextRequest) {
                 amount_cents: session.amount_total ?? 0,
               },
             })
-            if (walletErr) {
-              console.error('[webhook] hapi_tokens credit error:', walletErr)
-              // Fallback: direct upsert
-              const { data: existing } = await supabase
-                .from('hapi_tokens')
-                .select('balance')
-                .eq('user_id', userId)
-                .single()
-              if (existing) {
-                await supabase.from('hapi_tokens')
-                  .update({ balance: existing.balance + tokenAmount, lifetime_purchased: existing.balance + tokenAmount, updated_at: new Date().toISOString() })
-                  .eq('user_id', userId)
-              } else {
-                await supabase.from('hapi_tokens')
-                  .insert({ user_id: userId, balance: tokenAmount, lifetime_purchased: tokenAmount })
-              }
-            }
+            must(error, 'token credit')
 
-            // Also keep legacy token_balances table in sync (backward compat)
-            try {
-              const { data: legacyWallet } = await supabase
-                .from('token_balances')
-                .select('balance')
-                .eq('user_id', userId)
-                .single()
-              if (legacyWallet) {
-                await supabase.from('token_balances')
-                  .update({ balance: legacyWallet.balance + tokenAmount })
-                  .eq('user_id', userId)
-              } else {
-                await supabase.from('token_balances').insert({ user_id: userId, balance: tokenAmount })
-              }
-            } catch { /* legacy table may not exist — ignore */ }
-
-            // Check if this purchase crosses the auto-unlock threshold for creator monetization
+            // Check if this purchase crosses the auto-unlock threshold for creator monetization.
+            // Idempotent and non-critical.
             try {
               await supabase.rpc('check_monetization_auto_unlock', { p_user_id: userId })
-            } catch { /* non-critical — ignore */ }
+            } catch { /* ignore */ }
           }
         }
 
-        // Class enrollment — grant access after payment
+        // Class enrollment — unique (class_id, user_id)
         if (checkoutMode === 'class_enrollment' && userId) {
           const classId = session.metadata?.classId ?? ''
           if (classId) {
-            await supabase.from('class_enrollments').upsert(
+            const { error } = await supabase.from('class_enrollments').upsert(
               { class_id: classId, user_id: userId, status: 'active' },
-              { onConflict: 'class_id,user_id', ignoreDuplicates: true }
+              { onConflict: 'class_id,user_id', ignoreDuplicates: true },
             )
+            must(error, 'class enrollment')
           }
         }
 
-        // Course enrollment — grant access after payment
+        // Course enrollment — unique (course_id, user_id) (index added by the 20261107 migration; the
+        // upsert needs it). With ignoreDuplicates the
+        // upsert returns only rows it actually inserted, so the counter moves once.
         if (checkoutMode === 'course_enrollment' && userId) {
           const courseId = session.metadata?.courseId ?? ''
           const priceUsd = parseFloat(session.metadata?.priceUsd ?? '0')
           if (courseId) {
-            // Upsert enrollment
-            const { error: enrollErr } = await supabase
+            const { data: inserted, error: enrollErr } = await supabase
               .from('course_enrollments')
               .upsert(
                 {
@@ -170,167 +247,121 @@ export async function POST(req: NextRequest) {
                 },
                 { onConflict: 'course_id,user_id', ignoreDuplicates: true },
               )
+              .select('course_id')
+            must(enrollErr, 'course enrollment')
 
-            if (!enrollErr) {
-              // Increment enrollment_count
-              const { data: course } = await supabase
-                .from('courses')
-                .select('enrollment_count')
-                .eq('id', courseId)
-                .single()
-              if (course) {
-                await supabase
-                  .from('courses')
-                  .update({ enrollment_count: (course.enrollment_count ?? 0) + 1 })
-                  .eq('id', courseId)
-              }
-            } else {
-              throw enrollErr
+            // Atomic counter bump (bump_course_enrollment), not read-then-write. Only the
+            // delivery that actually inserted the enrollment row bumps it.
+            if (inserted && inserted.length > 0) {
+              const { error: bumpErr } = await supabase.rpc('bump_course_enrollment', { p_course_id: courseId })
+              must(bumpErr, 'course enrollment_count')
             }
           }
         }
 
-        // Academy program enrollment.
-        // /api/academy/programs/[programId]/enroll creates this checkout and
-        // relies on the webhook to grant access — without this branch the
-        // payment succeeded and the learner was never enrolled.
+        // Academy program enrollment — unique (program_id, user_id)
         if (checkoutMode === 'program_enrollment' && userId) {
           const programId = session.metadata?.programId ?? ''
           if (programId) {
-            // program_enrollments is (program_id, user_id, status, ...) with a
-            // UNIQUE(program_id, user_id); there is no price/session column, so
-            // this mirrors the free-enrollment path exactly.
-            const { error: enrollErr } = await supabase
+            const { error } = await supabase
               .from('program_enrollments')
               .upsert(
                 { program_id: programId, user_id: userId, status: 'active' },
                 { onConflict: 'program_id,user_id', ignoreDuplicates: true },
               )
-            if (enrollErr) throw enrollErr
+            must(error, 'program enrollment')
           } else {
             console.error('[webhook] program_enrollment with no programId in metadata', session.id)
           }
         }
 
-        // Flavor Points purchase — credit flavor wallet
-        if (checkoutMode === 'flavor_purchase' && userId) {
+        // Flavor Points purchase (cash, or the cash part of a partial-credit purchase).
+        // Wallet + purchase row commit together, once per Stripe session.
+        if ((checkoutMode === 'flavor_purchase' || checkoutMode === 'credit_flavor') && userId) {
           const pointsAmount = parseInt(session.metadata?.pointsAmount ?? '0', 10)
           const packageId = session.metadata?.packageId ?? ''
-          if (pointsAmount > 0) {
-            const amountUsd = (session.amount_total ?? 0) / 100
-
-            // Upsert flavor wallet
-            const { data: existing } = await supabase
-              .from('flavor_wallets')
-              .select('balance')
-              .eq('user_id', userId)
-              .single()
-
-            if (existing) {
-              await supabase
-                .from('flavor_wallets')
-                .update({ balance: existing.balance + pointsAmount, updated_at: new Date().toISOString() })
-                .eq('user_id', userId)
-            } else {
-              await supabase
-                .from('flavor_wallets')
-                .insert({ user_id: userId, balance: pointsAmount })
-            }
-
-            // Record purchase
-            await supabase.from('flavor_purchases').insert({
-              user_id: userId,
-              package_id: packageId,
-              points_credited: pointsAmount,
-              amount_usd: amountUsd,
-              stripe_session_id: session.id,
+          if (pointsAmount > 0 && (checkoutMode === 'flavor_purchase' || packageId)) {
+            const { error } = await supabase.rpc('credit_flavor_once', {
+              p_key: `stripe:session:${session.id}:flavor`,
+              p_user_id: userId,
+              p_package_id: packageId,
+              p_points: pointsAmount,
+              p_amount_usd: (session.amount_total ?? 0) / 100,
+              p_session_id: session.id,
             })
+            must(error, 'flavor credit')
           }
         }
 
-        // ── Partial-credit PPV (credits already deducted at checkout time) ──────
-        // The credit deduction already happened in /api/credits/checkout.
-        // Here we just finalize the purchase row with the Stripe payment info.
+        // Partial-credit PPV (credits were deducted at checkout time): finalize the
+        // purchase row. Unique (buyer_id, video_id).
         if (checkoutMode === 'credit_ppv' && userId) {
-          const videoId = session.metadata?.videoId ?? ''
-          if (videoId) {
-            const { error: purchaseErr } = await supabase.from('purchases').upsert(
+          const creditVideoId = session.metadata?.videoId ?? ''
+          if (creditVideoId) {
+            const { error } = await supabase.from('purchases').upsert(
               {
                 buyer_id: userId,
-                video_id: videoId,
+                video_id: creditVideoId,
                 stripe_payment_intent_id: session.payment_intent as string,
                 amount: session.amount_total ?? 0,
                 credit_funded: true,
               },
               { onConflict: 'buyer_id,video_id', ignoreDuplicates: true },
             )
-            if (purchaseErr) throw purchaseErr
-            console.log(`[webhook] credit_ppv unlocked video ${videoId} for user ${userId}`)
+            must(error, 'credit ppv purchase')
+            console.log(`[webhook] credit_ppv unlocked video ${creditVideoId} for user ${userId}`)
+            // fulfilled: free the (buyer, video) claim /api/credits/checkout took before the debit
+            await releaseCreditClaim(supabase, userId, creditVideoId, session.metadata?.checkoutRef)
           }
         }
 
-        // ── Partial-credit Flavor Points purchase ─────────────────────────────
-        if (checkoutMode === 'credit_flavor' && userId) {
-          const packageId = session.metadata?.packageId ?? ''
-          const pointsAmount = parseInt(session.metadata?.pointsAmount ?? '0', 10)
-          if (packageId && pointsAmount > 0) {
-            const amountUsd = (session.amount_total ?? 0) / 100
-
-            const { data: wallet } = await supabase
-              .from('flavor_wallets')
-              .select('balance')
-              .eq('user_id', userId)
-              .single()
-
-            if (wallet) {
-              await supabase
-                .from('flavor_wallets')
-                .update({ balance: wallet.balance + pointsAmount, updated_at: new Date().toISOString() })
-                .eq('user_id', userId)
-            } else {
-              await supabase.from('flavor_wallets').insert({ user_id: userId, balance: pointsAmount })
-            }
-
-            await supabase.from('flavor_purchases').insert({
-              user_id: userId,
-              package_id: packageId,
-              points_credited: pointsAmount,
-              amount_usd: amountUsd,
-              stripe_session_id: session.id,
-            })
-          }
-        }
-
-        // ── Manual credit loan repayment ─────────────────────────────────────
+        // Manual credit loan repayment — once per Stripe session
         if (checkoutMode === 'credits_repay' && userId) {
           const repayAmount = parseFloat(session.metadata?.repayAmountUsd ?? '0')
           if (repayAmount > 0) {
-            // Re-fetch balance to ensure we don't over-reduce
-            const bal = await getCreditBalance(userId)
-            const actualRepay = Math.min(repayAmount, bal.loanBalance)
+            const { data: applied, error } = await supabase.rpc('repay_loan_once', {
+              p_key: `stripe:session:${session.id}:repay`,
+              p_user_id: userId,
+              p_amount: repayAmount,
+              p_session_id: session.id,
+            })
+            must(error, 'loan repayment')
+            console.log(`[webhook] credits_repay: user ${userId} repaid $${Number(applied ?? 0).toFixed(2)}`)
+          }
+        }
+        break
+      }
 
-            if (actualRepay > 0) {
-              const newLoan = Math.round((bal.loanBalance - actualRepay) * 100) / 100
-              const newRepaid = Math.round((bal.loanRepaid + actualRepay) * 100) / 100
-
-              await supabase
-                .from('app_credits')
-                .update({ loan_balance: newLoan, loan_repaid: newRepaid })
-                .eq('user_id', userId)
-
-              await supabase.from('credit_ledger').insert({
-                user_id: userId,
-                entry_type: 'repay_loan_manual',
-                amount: actualRepay,
-                gift_balance_after: bal.giftBalance,
-                loan_balance_after: newLoan,
-                reference_id: session.id,
-                reference_type: 'stripe_repay',
-                notes: `Manual repayment via Stripe session ${session.id}`,
-              })
-
-              console.log(`[webhook] credits_repay: user ${userId} repaid $${actualRepay.toFixed(2)}, new loan balance $${newLoan}`)
-            }
+      // ── Abandoned / failed partial-credit checkout: give the credits back ─────
+      // /api/credits/checkout debits credits BEFORE creating the Stripe session. If
+      // the session expires (we create them with a 30 minute expiry) or an async
+      // payment fails, the cash part will never arrive, so the credits go back.
+      // Keyed by checkoutRef (or the session id for older sessions): expired +
+      // async_payment_failed + a route-side restore + any replay restore once.
+      case 'checkout.session.expired':
+      case 'checkout.session.async_payment_failed': {
+        const session = event.data.object as Stripe.Checkout.Session
+        const { userId, checkoutMode } = session.metadata ?? {}
+        if ((checkoutMode === 'credit_ppv' || checkoutMode === 'credit_flavor') && userId) {
+          const gift = Number(session.metadata?.giftUsed ?? 0) || 0
+          const loan = Number(session.metadata?.loanUsed ?? 0) || 0
+          if (gift > 0 || loan > 0) {
+            // Same key as /api/credits/checkout uses when it restores on a failed
+            // sessions.create, so a timed-out create that still produced a session
+            // (which later expires) can never restore twice. Sessions created before
+            // checkoutRef existed fall back to the per-session key.
+            const checkoutRef = session.metadata?.checkoutRef
+            const { error } = await supabase.rpc('restore_credits_once', {
+              p_key: checkoutRef ? `credit-checkout:${checkoutRef}:restore` : `stripe:session:${session.id}:credit-restore`,
+              p_user_id: userId,
+              p_gift: gift,
+              p_loan: loan,
+              p_ref: session.id,
+              p_notes: `Credits returned: checkout ${event.type === 'checkout.session.expired' ? 'expired' : 'payment failed'} (${session.id})`,
+            })
+            must(error, 'credit restore')
+            // credits are back: free the (buyer, video) claim so the buyer can try again
+            await releaseCreditClaim(supabase, userId, session.metadata?.videoId, checkoutRef)
           }
         }
         break
@@ -348,21 +379,27 @@ export async function POST(req: NextRequest) {
         }
 
         if (userId && channelId) {
-          await supabase.from('subscriptions').upsert({
+          // From API version basil the period end is on the subscription item, not the
+          // subscription. If neither is there the column is left as it was (never throw).
+          const periodEnd = currentPeriodEndIso(sub)
+          const { error } = await supabase.from('subscriptions').upsert({
             subscriber_id: userId,
             channel_id: channelId,
             stripe_subscription_id: sub.id,
             status: sub.status,
-            current_period_end: new Date((sub as any).current_period_end * 1000).toISOString(),
+            ...(periodEnd ? { current_period_end: periodEnd } : {}),
           }, { onConflict: 'stripe_subscription_id' })
-        } else {
-          // Platform subscription — update profile
+          must(error, 'channel subscription')
+        } else if (sub.metadata?.kind !== 'pro_subscription') {
+          // Platform subscription — update profile. A Pro subscription has no channelId
+          // but is NOT the platform subscription: it is handled by handleProSubscriptionEvent.
           const customer = await stripe.customers.retrieve(sub.customer as string)
           if (!('deleted' in customer)) {
-            await supabase.from('profiles').update({
+            const { error } = await supabase.from('profiles').update({
               platform_subscription_id: sub.id,
               platform_subscription_status: sub.status,
             }).eq('stripe_customer_id', sub.customer as string)
+            must(error, 'platform subscription status')
           }
         }
         break
@@ -378,13 +415,67 @@ export async function POST(req: NextRequest) {
         }
 
         if (userId && channelId) {
-          await supabase.from('subscriptions')
+          const { error } = await supabase.from('subscriptions')
             .update({ status: 'canceled' })
             .eq('stripe_subscription_id', sub.id)
-        } else {
-          await supabase.from('profiles').update({
+          must(error, 'channel subscription cancel')
+        } else if (sub.metadata?.kind !== 'pro_subscription') {
+          const { error } = await supabase.from('profiles').update({
             platform_subscription_status: 'canceled',
           }).eq('stripe_customer_id', sub.customer as string)
+          must(error, 'platform subscription cancel')
+        }
+        break
+      }
+
+      // ── Pro subscription invoice paid: record REAL revenue for the creator pool ──
+      // pro_revenue_ledger is the only input to the monthly payout's gross. Keyed
+      // by invoice id, so a replay (or two event ids for one invoice) records once.
+      case 'invoice.paid': {
+        const invoice = event.data.object as Stripe.Invoice
+        // Field locations differ by the endpoint's API version: lib/stripe-shapes reads both.
+        const subId = invoiceSubscriptionId(invoice)
+        const subMeta = invoiceSubscriptionMetadata(invoice)
+        let isPro = subMeta.kind === 'pro_subscription'
+        if (!isPro && subId) {
+          const { data: proRow, error } = await supabase
+            .from('pro_subscriptions')
+            .select('user_id')
+            .eq('stripe_subscription_id', subId)
+            .maybeSingle()
+          must(error, 'pro subscription lookup')
+          isPro = !!proRow
+        }
+        const collected = (invoice.amount_paid ?? 0) - invoiceTaxCents(invoice)
+        if (isPro && invoice.id && collected > 0) {
+          const paidAtSec = invoice.status_transitions?.paid_at ?? invoice.created
+          const paidAt = new Date(paidAtSec * 1000)
+          // The payment intent is what links a later refund / dispute back to this row when
+          // the charge no longer names its invoice (basil). Old shape: invoice.payment_intent.
+          // Basil: invoice.payments (only if expanded), else one InvoicePayments lookup. A lookup
+          // failure is not fatal here: the refund path has the same lookup as its last resort.
+          let paymentIntentId = invoicePaymentIntentId(invoice)
+          if (!paymentIntentId) {
+            try {
+              paymentIntentId = await invoicePaymentIntentFromApi(stripe, invoice.id)
+            } catch (err) {
+              console.error(`[stripe/webhook] invoice.paid ${invoice.id}: could not look up the payment intent (refund matching will retry the lookup):`, err)
+            }
+          }
+          const { error } = await supabase.from('pro_revenue_ledger').upsert(
+            {
+              stripe_invoice_id: invoice.id,
+              stripe_payment_intent_id: paymentIntentId,
+              user_id: subMeta.user_id ?? null,
+              stripe_subscription_id: subId,
+              amount_cents: collected,
+              currency: invoice.currency ?? 'usd',
+              paid_at: paidAt.toISOString(),
+              month: paidAt.toISOString().slice(0, 7),
+            },
+            { onConflict: 'stripe_invoice_id', ignoreDuplicates: true },
+          )
+          must(error, 'pro revenue ledger')
         }
         break
       }
@@ -392,92 +483,158 @@ export async function POST(req: NextRequest) {
       // ── Invoice payment failed ────────────────────────────────────────────────
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
-        if (invoice.subscription) {
-          await supabase.from('subscriptions')
+        const failedSubId = invoiceSubscriptionId(invoice)
+        if (failedSubId) {
+          const { error } = await supabase.from('subscriptions')
             .update({ status: 'past_due' })
-            .eq('stripe_subscription_id', invoice.subscription as string)
+            .eq('stripe_subscription_id', failedSubId)
+          must(error, 'invoice payment failed')
         }
         break
       }
 
       // ── Refund / chargeback — claw back token credits ─────────────────────────
-      // Token purchases record the Stripe session in token_ledger metadata
-      // (stripe_session_id, set in the token_purchase branch above). We map
-      // charge → payment_intent → checkout session, read the session metadata
-      // that the checkout flow stored (checkoutMode, userId, tokenAmount), and
-      // reverse the credit via record_token_movement. If the original purchase
-      // can't be located we log and still return 200 — never 500 to Stripe.
+      // Token purchases are keyed by PAYMENT, not by event: a refund plus a dispute
+      // on one charge, or two partial refunds, are several events for one purchase.
+      // reverse_tokens_for_payment keeps one row per payment intent with cumulative
+      // refund / dispute targets (proportional to amount_refunded / amount, capped at
+      // what was bought), so no sequence of events can ever reverse more than the
+      // buyer got, and a replay changes nothing. If the buyer already spent some of
+      // it, the available balance is clawed back and the shortfall lands in
+      // money_exceptions for manual review (written inside the same function).
       case 'charge.refunded':
       case 'charge.dispute.created': {
-        try {
-          const isDispute = event.type === 'charge.dispute.created'
-          const reason = isDispute ? 'chargeback' : 'refund'
+        const isDispute = event.type === 'charge.dispute.created'
+        const reason = isDispute ? 'chargeback' : 'refund'
+        const charge = isDispute ? null : (event.data.object as Stripe.Charge)
+        const dispute = isDispute ? (event.data.object as Stripe.Dispute) : null
 
-          const paymentIntentId = isDispute
-            ? ((event.data.object as Stripe.Dispute).payment_intent as string | null)
-            : ((event.data.object as Stripe.Charge).payment_intent as string | null)
+        // A refunded / disputed Pro invoice shrinks that month's pool. Absolute
+        // amounts from Stripe, so replays are harmless.
+        const ledgerCharge: Stripe.Charge | null = charge
+          ?? (dispute?.charge
+            ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
+            : null)
+        if (ledgerCharge) {
+          await patchProLedger(
+            supabase,
+            ledgerCharge,
+            isDispute ? { disputed_cents: Number(dispute?.amount ?? 0) } : { refunded_cents: charge?.amount_refunded ?? 0 },
+            event.type,
+          )
+        }
 
-          if (!paymentIntentId) {
-            console.error(`[stripe/webhook] ${event.type}: no payment_intent on event ${event.id} — skipping`)
-            break
-          }
+        const paymentIntentId = isDispute
+          ? ((dispute!.payment_intent as string | null) ?? null)
+          : (charge!.payment_intent as string | null)
 
-          // Locate the original checkout session for this payment intent
-          const sessions = await stripe.checkout.sessions.list({
-            payment_intent: paymentIntentId,
-            limit: 1,
-          })
-          const session = sessions.data[0]
+        if (!paymentIntentId) {
+          console.error(`[stripe/webhook] ${event.type}: no payment_intent on event ${event.id} — skipping`)
+          break
+        }
 
-          if (!session) {
-            console.error(`[stripe/webhook] ${event.type}: no checkout session for payment_intent ${paymentIntentId} — skipping`)
-            break
-          }
+        const sessions = await stripe.checkout.sessions.list({
+          payment_intent: paymentIntentId,
+          limit: 1,
+        })
+        const session = sessions.data[0]
 
-          const { userId, checkoutMode } = session.metadata ?? {}
+        if (!session) {
+          console.error(`[stripe/webhook] ${event.type}: no checkout session for payment_intent ${paymentIntentId} — skipping`)
+          break
+        }
 
-          if (checkoutMode === 'token_purchase' && userId) {
-            const tokenAmount = parseInt(session.metadata?.tokenAmount ?? '0', 10)
-            if (tokenAmount > 0) {
-              // Negative movement reverses the purchase credit. token_ledger's
-              // type CHECK only allows 'refund' — the chargeback distinction is
-              // preserved in the description + metadata.reason.
-              const { error: reverseErr } = await supabase.rpc('record_token_movement', {
-                p_user_id: userId,
-                p_type: 'refund',
-                p_amount: -tokenAmount,
-                p_description: `Reversed ${tokenAmount} Hapi Tokens (${reason})`,
-                p_metadata: {
-                  reason,
-                  stripe_event_id: event.id,
-                  stripe_session_id: session.id,
-                  stripe_payment_intent_id: paymentIntentId,
-                },
-              })
-              if (reverseErr) {
-                console.error(`[stripe/webhook] ${event.type}: token reversal failed for user ${userId}:`, reverseErr)
-              } else {
-                console.log(`[stripe/webhook] ${event.type}: reversed ${tokenAmount} tokens for user ${userId} (${reason})`)
-              }
+        const { userId, checkoutMode } = session.metadata ?? {}
+
+        if (checkoutMode === 'token_purchase' && userId) {
+          const tokenAmount = parseInt(session.metadata?.tokenAmount ?? '0', 10)
+          if (tokenAmount > 0) {
+            // Share of the purchase this event covers, as tokens (floor; a full refund is exact).
+            const paid = Number(charge?.amount ?? session.amount_total ?? 0)
+            const covered = isDispute ? Number(dispute?.amount ?? 0) : Number(charge?.amount_refunded ?? 0)
+            const fullyCovered = isDispute
+              ? !(paid > 0) || covered >= paid
+              : charge?.refunded === true || (paid > 0 && covered >= paid)
+            const sourceTokens = fullyCovered
+              ? tokenAmount
+              : Math.min(tokenAmount, Math.floor((tokenAmount * covered) / paid))
+
+            const { data: rev, error: reverseErr } = await supabase.rpc('reverse_tokens_for_payment', {
+              p_key: `stripe:pi:${paymentIntentId}:token-reversal`,
+              p_user_id: userId,
+              p_purchased: tokenAmount,
+              p_source: isDispute ? 'dispute' : 'refund',
+              p_source_tokens: sourceTokens,
+              p_reason: reason,
+              p_metadata: {
+                reason,
+                stripe_event_id: event.id,
+                stripe_session_id: session.id,
+                stripe_payment_intent_id: paymentIntentId,
+              },
+            })
+            must(reverseErr, 'token reversal')
+            if (rev?.shortfall > 0) {
+              // The buyer already spent part of it; retrying cannot help. The function
+              // clawed back what was available and recorded the rest in money_exceptions.
+              console.error(`[stripe/webhook] ${event.type}: ${rev.shortfall} tokens not recoverable from ${userId} (already spent) — see money_exceptions`)
             }
-          } else {
-            console.log(`[stripe/webhook] ${event.type}: session ${session.id} is checkoutMode=${checkoutMode ?? 'unknown'} — no token reversal applicable`)
+            console.log(`[stripe/webhook] ${event.type}: reversed ${rev?.reversed_now ?? 0} tokens for user ${userId} (${reason}); ${rev?.reversed_total ?? 0}/${tokenAmount} total`)
           }
-        } catch (err) {
-          // Never bubble a 500 back to Stripe for refund/dispute handling
-          console.error(`[stripe/webhook] ${event.type} handler error (returning 200):`, err)
+        } else {
+          console.log(`[stripe/webhook] ${event.type}: session ${session.id} is checkoutMode=${checkoutMode ?? 'unknown'} — no token reversal applicable`)
         }
         break
       }
+
+      // ── Dispute closed ────────────────────────────────────────────────────────
+      // Only a WON dispute changes anything: the merchant keeps the money, so the Pro
+      // ledger no longer loses it (disputed_cents back to 0) and the dispute share of the
+      // token reversal is dropped. Tokens already clawed back are NOT re-credited here: a
+      // person reviews that (money_exceptions 'dispute_won_review'). A lost dispute leaves
+      // the charge.dispute.created effects as they are. Every step is absolute / deduped,
+      // so a replay changes nothing.
+      case 'charge.dispute.closed': {
+        const dispute = event.data.object as Stripe.Dispute
+        if (dispute.status !== 'won') {
+          console.log(`[stripe/webhook] ${event.type} ${dispute.id}: status=${dispute.status} — nothing to undo`)
+          break
+        }
+
+        const disputeCharge: Stripe.Charge | null = dispute.charge
+          ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
+          : null
+        if (disputeCharge) {
+          await patchProLedger(supabase, disputeCharge, { disputed_cents: 0 }, event.type)
+        }
+
+        const disputePi = typeof dispute.payment_intent === 'string'
+          ? dispute.payment_intent
+          : (dispute.payment_intent as { id?: string } | null)?.id
+            ?? (typeof disputeCharge?.payment_intent === 'string' ? disputeCharge.payment_intent : null)
+        if (!disputePi) {
+          console.error(`[stripe/webhook] ${event.type}: no payment_intent on dispute ${dispute.id} — token side skipped`)
+          break
+        }
+        const { data: won, error: wonErr } = await supabase.rpc('dispute_won_for_payment', {
+          p_key: `stripe:pi:${disputePi}:token-reversal`,
+          p_dispute_id: dispute.id,
+        })
+        must(wonErr, 'dispute won')
+        console.log(`[stripe/webhook] ${event.type} ${dispute.id}: won — dispute tokens released from target; review row ${won?.review ? 'written' : 'not needed'}`)
+        break
+      }
     }
+
+    const { error: doneErr } = await supabase.rpc('complete_stripe_event', { p_id: event.id })
+    must(doneErr, 'complete_stripe_event')
   } catch (err) {
-    // Fulfilment failed. Release the claim so Stripe's retry runs the event again
-    // (a 500 makes Stripe retry). Keeping the claim would drop the payment for good.
-    console.error(`[stripe/webhook] ${event.type} ${event.id} failed, releasing claim for retry:`, err)
-    if (claimed) {
-      const { error: releaseErr } = await supabase.from('stripe_events').delete().eq('id', event.id)
-      if (releaseErr) console.error('[stripe/webhook] could not release claim:', releaseErr)
-    }
+    // Fulfilment failed. Hand the lease back so Stripe's retry runs the event again
+    // immediately. The row stays 'processing' (never 'completed'), and if even this
+    // release fails the lease simply expires on its own and the retry takes over.
+    console.error(`[stripe/webhook] ${event.type} ${event.id} failed, releasing lease for retry:`, err)
+    const { error: releaseErr } = await supabase.rpc('release_stripe_event', { p_id: event.id })
+    if (releaseErr) console.error('[stripe/webhook] could not release lease (will expire):', releaseErr)
     return NextResponse.json({ error: 'Fulfilment failed' }, { status: 500 })
   }
 

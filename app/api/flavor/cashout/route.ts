@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { autoRepayLoanFromCashout } from '@/lib/credits'
+import { payoutsPausedResponse } from '@/lib/payments-pause'
 
 // 1 Flavor Point = $0.0099 (base rate: 100 pts = $0.99)
 const USD_PER_POINT = 0.0099
@@ -47,6 +48,8 @@ export async function GET() {
 }
 
 export async function POST() {
+  const paused = payoutsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

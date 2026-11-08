@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { randomUUID } from 'crypto'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 // Gift catalog — cost in points
 const GIFTS: Record<string, { name: string; emoji: string; pointsCost: number }> = {
@@ -20,6 +22,8 @@ const GIFTS: Record<string, { name: string; emoji: string; pointsCost: number }>
 const CREATOR_SHARE = 0.5
 
 export async function POST(req: NextRequest) {
+  const paused = paymentsPausedResponse()
+  if (paused) return paused
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -27,7 +31,12 @@ export async function POST(req: NextRequest) {
   const rl = checkRateLimit(`${user.id}:flavor-gift`, 10, 60_000)
   if (!rl.allowed) return NextResponse.json({ error: 'Too many gifts — slow down a moment.' }, { status: 429 })
 
-  const { giftId, streamId } = await req.json()
+  const { giftId, streamId, requestId: clientRequestId } = await req.json()
+  // One id per gift tap, reused by the client on retry: the same id is charged once.
+  const requestId =
+    typeof clientRequestId === 'string' && clientRequestId.length > 0 && clientRequestId.length <= 100
+      ? clientRequestId
+      : randomUUID()
   if (!giftId || !streamId) {
     return NextResponse.json({ error: 'giftId and streamId are required' }, { status: 400 })
   }
@@ -57,76 +66,31 @@ export async function POST(req: NextRequest) {
   const pointsCost = gift.pointsCost
   const creatorShare = Math.floor(pointsCost * CREATOR_SHARE)
 
-  // 1. Check sender wallet
-  const { data: wallet } = await serviceClient
-    .from('flavor_wallets')
-    .select('balance')
-    .eq('user_id', user.id)
-    .single()
-
-  if (!wallet || wallet.balance < pointsCost) {
-    return NextResponse.json({ error: 'Insufficient Flavor Points balance', code: 'insufficient_balance' }, { status: 402 })
-  }
-
-  // 2. Deduct from sender wallet (optimistic lock: match balance so concurrent requests fail)
-  const { error: deductError, data: deductResult } = await serviceClient
-    .from('flavor_wallets')
-    .update({ balance: wallet.balance - pointsCost, updated_at: new Date().toISOString() })
-    .eq('user_id', user.id)
-    .eq('balance', wallet.balance) // optimistic lock — if balance changed, 0 rows updated
-    .select('balance')
-
-  if (deductError || !deductResult || deductResult.length === 0) {
-    return NextResponse.json({ error: 'Balance changed — please retry' }, { status: 409 })
-  }
-
-  // Compensating refund — points were already debited, so any downstream
-  // failure must return them or the sender loses Flavor Points for nothing.
-  const refundSender = async () => {
-    const { data: w } = await serviceClient
-      .from('flavor_wallets').select('balance').eq('user_id', user.id).single()
-    await serviceClient
-      .from('flavor_wallets')
-      .update({ balance: (w?.balance ?? 0) + pointsCost, updated_at: new Date().toISOString() })
-      .eq('user_id', user.id)
-  }
-
-  // 3. Record gift event
-  const { data: giftEvent, error: giftError } = await serviceClient
-    .from('flavor_gift_events')
-    .insert({
-      stream_id: streamId,
-      sender_id: user.id,
-      creator_id: creatorId,
-      gift_id: giftId,
-      points_spent: pointsCost,
-      creator_share: creatorShare,
-    })
-    .select('id')
-    .single()
-
-  if (giftError || !giftEvent) {
-    await refundSender()
-    return NextResponse.json({ error: 'Failed to record gift — your points were refunded.' }, { status: 500 })
-  }
-
-  // 4. Credit creator earnings — if this fails, roll back the gift event + refund
-  const { error: earnError } = await serviceClient.from('creator_flavor_earnings').insert({
-    creator_id: creatorId,
-    gift_event_id: giftEvent.id,
-    points_earned: creatorShare,
-    status: 'pending',
+  // Debit the sender, record the gift and credit the creator's earnings in ONE transaction
+  // (send_flavor_gift). The sender's wallet row is locked, the balance can't go negative, and
+  // the same (sender, request_id) is charged once even if the client submits twice.
+  const { data: result, error: giftError } = await serviceClient.rpc('send_flavor_gift', {
+    p_request_id:    requestId,
+    p_sender_id:     user.id,
+    p_creator_id:    creatorId,
+    p_stream_id:     streamId,
+    p_gift_id:       giftId,
+    p_points_cost:   pointsCost,
+    p_creator_share: creatorShare,
   })
 
-  if (earnError) {
-    await serviceClient.from('flavor_gift_events').delete().eq('id', giftEvent.id)
-    await refundSender()
-    return NextResponse.json({ error: 'Failed to credit the creator — your points were refunded.' }, { status: 500 })
+  if (giftError) {
+    if (giftError.message?.includes('INSUFFICIENT_BALANCE')) {
+      return NextResponse.json({ error: 'Insufficient Flavor Points balance', code: 'insufficient_balance' }, { status: 402 })
+    }
+    console.error('[flavor/gift] send_flavor_gift error:', giftError)
+    return NextResponse.json({ error: 'Could not send the gift — you were not charged.' }, { status: 500 })
   }
 
   return NextResponse.json({
     success: true,
+    duplicate: result?.status === 'duplicate',
     gift: { id: giftId, name: gift.name, emoji: gift.emoji, pointsCost },
-    newBalance: wallet.balance - pointsCost,
+    newBalance: result?.new_balance,
   })
 }

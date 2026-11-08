@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe'
+import { paymentsPausedResponse } from '@/lib/payments-pause'
 
 export const dynamic = 'force-dynamic'
 
@@ -100,6 +101,10 @@ export async function POST(req: NextRequest, { params }: { params: { courseId: s
         return finalize('free', 0)
       }
 
+      // Free / zero-priced / Pro-included enrollments above are never paused; paying (tokens or card) is.
+      const paused = paymentsPausedResponse()
+      if (paused) return paused
+
       const method = body.method
       if (method !== 'tokens' && method !== 'stripe') {
         return NextResponse.json({ error: "method must be 'tokens' or 'stripe'" }, { status: 400 })
@@ -173,6 +178,7 @@ export async function POST(req: NextRequest, { params }: { params: { courseId: s
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: 'payment',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         success_url: safeSuccess,
         cancel_url: safeCancel,
         line_items: [{

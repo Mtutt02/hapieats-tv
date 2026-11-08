@@ -6,6 +6,7 @@ import { Lock, DollarSign, CreditCard, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getVideoThumbnail } from '@/lib/utils'
 import type { Video } from '@/types'
+import { usePauseStatus } from '@/components/PauseStatus'
 
 interface VideoPlayerClientProps {
   video: Video
@@ -14,6 +15,7 @@ interface VideoPlayerClientProps {
 }
 
 export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPlayerClientProps) {
+  const { paymentsPaused } = usePauseStatus()
   const [loading, setLoading] = useState(false)
 
   const thumbnail = getVideoThumbnail(video.mux_playback_id, video.thumbnail_url)
@@ -119,7 +121,7 @@ export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPla
           {video.pricing_model === 'pay_per_view' && (
             <Button
               onClick={() => handlePurchase('pay_per_view')}
-              disabled={loading}
+              disabled={loading || paymentsPaused}
               className="flex-1 gap-2"
             >
               <DollarSign className="h-4 w-4" />
@@ -129,7 +131,7 @@ export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPla
           {video.pricing_model === 'subscription' && (
             <Button
               onClick={() => handlePurchase('creator_subscription')}
-              disabled={loading}
+              disabled={loading || paymentsPaused}
               className="flex-1 gap-2"
             >
               <CreditCard className="h-4 w-4" />
@@ -142,7 +144,7 @@ export default function VideoPlayerClient({ video, hasAccess, userId }: VideoPla
           <Button
             variant="outline"
             onClick={() => handlePurchase('platform_subscription')}
-            disabled={loading}
+            disabled={loading || paymentsPaused}
             className="flex-1 border-white/30 text-white hover:bg-white/10 gap-2"
           >
             <CreditCard className="h-4 w-4" />
