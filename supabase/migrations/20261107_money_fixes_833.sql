@@ -440,11 +440,14 @@ CREATE TABLE IF NOT EXISTS public.pro_revenue_ledger (
   stripe_subscription_id TEXT,
   amount_cents           BIGINT NOT NULL CHECK (amount_cents >= 0), -- collected, excluding tax
   refunded_cents         BIGINT NOT NULL DEFAULT 0 CHECK (refunded_cents >= 0),
+  disputed_cents         BIGINT NOT NULL DEFAULT 0 CHECK (disputed_cents >= 0),
   currency               TEXT NOT NULL DEFAULT 'usd',
   paid_at                TIMESTAMPTZ NOT NULL,
   month                  TEXT NOT NULL,                              -- 'YYYY-MM' (UTC) of paid_at
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- (a first run of this migration created the table without disputed_cents)
+ALTER TABLE public.pro_revenue_ledger ADD COLUMN IF NOT EXISTS disputed_cents BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_pro_revenue_ledger_month ON public.pro_revenue_ledger (month);
 ALTER TABLE public.pro_revenue_ledger ENABLE ROW LEVEL SECURITY; -- service role only
 
@@ -483,7 +486,7 @@ BEGIN
     RETURN jsonb_build_object('status', 'already_distributed');
   END IF;
 
-  SELECT COUNT(*), COALESCE(SUM(GREATEST(amount_cents - refunded_cents, 0)), 0)
+  SELECT COUNT(*), COALESCE(SUM(GREATEST(amount_cents - refunded_cents - disputed_cents, 0)), 0)
     INTO v_invoices, v_gross
     FROM public.pro_revenue_ledger WHERE month = p_month;
 
@@ -601,7 +604,7 @@ BEGIN
 
   SELECT id, creator_id, status, title INTO v_stream FROM public.live_streams WHERE id = p_stream_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'STREAM_NOT_FOUND'; END IF;
-  IF v_stream.status = 'ended' THEN RAISE EXCEPTION 'STREAM_ENDED'; END IF;
+  IF v_stream.status IS DISTINCT FROM 'active' THEN RAISE EXCEPTION 'STREAM_ENDED'; END IF; -- only a live ('active') stream takes gifts
   IF v_stream.creator_id = p_sender_id THEN RAISE EXCEPTION 'OWN_STREAM'; END IF;
 
   SELECT id, name, emoji, token_cost, creator_pct, platform_pct, circle_pct INTO v_gift
@@ -766,4 +769,160 @@ BEGIN
     EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', v_sig);
     EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', v_sig);
   END LOOP;
+END $$;
+
+-- ── 7. Manual-review rows for money that could not be settled (#833 F6, F10) ─
+-- Anything the code cannot finish by itself (a credit restore that failed, a
+-- token clawback where the buyer already spent the tokens) is written HERE, not
+-- just to the log, so someone reviewing money can see it. RLS on, no policy:
+-- service role only.
+CREATE TABLE IF NOT EXISTS public.money_exceptions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  dedupe_key  TEXT UNIQUE,                -- one row per problem, however often it is retried
+  kind        TEXT NOT NULL,              -- 'credit_restore_failed' | 'token_clawback_shortfall' | ...
+  user_id     UUID,
+  ref         TEXT,                       -- stripe session / payment intent / checkout ref
+  amount      NUMERIC,
+  detail      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by UUID
+);
+CREATE INDEX IF NOT EXISTS idx_money_exceptions_open ON public.money_exceptions (created_at) WHERE resolved_at IS NULL;
+ALTER TABLE public.money_exceptions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.money_exceptions FROM anon, authenticated;
+
+-- ── 8. Token clawback: one row per PAYMENT, proportional, capped (#833 F2, F10) ─
+-- Keyed by payment intent (not by event): a refund + a dispute on one charge, or
+-- two partial refunds, are several events for ONE purchase. refund_tokens and
+-- dispute_tokens are cumulative targets (absolute, from Stripe's cumulative
+-- amounts), so a replay changes nothing; the total reversed can never exceed what
+-- was bought. If the buyer already spent some of it, what is available is clawed
+-- back and the shortfall goes to money_exceptions.
+CREATE TABLE IF NOT EXISTS public.token_reversals (
+  effect_key     TEXT PRIMARY KEY,        -- 'stripe:pi:<payment_intent>:token-reversal'
+  user_id        UUID NOT NULL,
+  purchased      INT  NOT NULL CHECK (purchased > 0),
+  refund_tokens  INT  NOT NULL DEFAULT 0 CHECK (refund_tokens >= 0),
+  dispute_tokens INT  NOT NULL DEFAULT 0 CHECK (dispute_tokens >= 0),
+  reversed       INT  NOT NULL DEFAULT 0 CHECK (reversed >= 0),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.token_reversals ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.token_reversals FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.reverse_tokens_for_payment(
+  p_key           TEXT,
+  p_user_id       UUID,
+  p_purchased     INT,
+  p_source        TEXT,   -- 'refund' | 'dispute'
+  p_source_tokens INT,    -- cumulative tokens this source covers (proportional to the amount)
+  p_reason        TEXT    DEFAULT NULL,
+  p_metadata      JSONB   DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row       public.token_reversals%ROWTYPE;
+  v_target    INT;
+  v_delta     INT;
+  v_balance   INT;
+  v_debit     INT;
+BEGIN
+  IF p_source NOT IN ('refund', 'dispute') THEN
+    RAISE EXCEPTION 'reverse_tokens_for_payment: bad source %', p_source;
+  END IF;
+  IF p_purchased IS NULL OR p_purchased <= 0 THEN
+    RAISE EXCEPTION 'reverse_tokens_for_payment: purchased must be positive';
+  END IF;
+
+  INSERT INTO public.token_reversals (effect_key, user_id, purchased)
+  VALUES (p_key, p_user_id, p_purchased)
+  ON CONFLICT (effect_key) DO NOTHING;
+
+  SELECT * INTO v_row FROM public.token_reversals WHERE effect_key = p_key FOR UPDATE;
+
+  IF p_source = 'refund' THEN
+    v_row.refund_tokens := GREATEST(v_row.refund_tokens, LEAST(GREATEST(COALESCE(p_source_tokens, 0), 0), v_row.purchased));
+  ELSE
+    v_row.dispute_tokens := GREATEST(v_row.dispute_tokens, LEAST(GREATEST(COALESCE(p_source_tokens, 0), 0), v_row.purchased));
+  END IF;
+
+  v_target := LEAST(v_row.purchased, v_row.refund_tokens + v_row.dispute_tokens);
+  v_delta  := v_target - v_row.reversed;
+
+  v_debit := 0;
+  IF v_delta > 0 THEN
+    -- Lock the wallet, then take what is there (never below zero).
+    INSERT INTO public.hapi_tokens (user_id, balance) VALUES (p_user_id, 0)
+    ON CONFLICT (user_id) DO NOTHING;
+    SELECT balance INTO v_balance FROM public.hapi_tokens WHERE user_id = p_user_id FOR UPDATE;
+    v_debit := LEAST(v_delta, GREATEST(v_balance, 0));
+    IF v_debit > 0 THEN
+      PERFORM public.record_token_movement(
+        p_user_id     := p_user_id,
+        p_type        := 'refund',
+        p_amount      := -v_debit,
+        p_description := format('Reversed %s Hapi Tokens (%s)', v_debit, COALESCE(p_reason, p_source)),
+        p_metadata    := COALESCE(p_metadata, '{}'::jsonb)
+                         || jsonb_build_object('reversal_key', p_key, 'source', p_source,
+                                               'cumulative_target', v_target, 'purchased', v_row.purchased)
+      );
+    END IF;
+  END IF;
+
+  UPDATE public.token_reversals
+     SET refund_tokens = v_row.refund_tokens, dispute_tokens = v_row.dispute_tokens,
+         reversed = reversed + v_debit, updated_at = now()
+   WHERE effect_key = p_key;
+
+  IF v_delta > v_debit THEN
+    INSERT INTO public.money_exceptions (dedupe_key, kind, user_id, ref, amount, detail)
+    VALUES (p_key || ':shortfall', 'token_clawback_shortfall', p_user_id, p_key, v_delta - v_debit,
+            jsonb_build_object('purchased', v_row.purchased, 'target', v_target,
+                               'reversed', v_row.reversed + v_debit, 'source', p_source))
+    ON CONFLICT (dedupe_key) DO UPDATE
+      SET amount = EXCLUDED.amount, detail = EXCLUDED.detail, updated_at = now(), resolved_at = NULL;
+  ELSE
+    UPDATE public.money_exceptions SET resolved_at = now(), updated_at = now()
+     WHERE dedupe_key = p_key || ':shortfall' AND resolved_at IS NULL;
+  END IF;
+
+  RETURN jsonb_build_object('target', v_target, 'reversed_now', v_debit,
+                            'reversed_total', v_row.reversed + v_debit,
+                            'shortfall', GREATEST(v_delta - v_debit, 0));
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reverse_tokens_for_payment(TEXT, UUID, INT, TEXT, INT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reverse_tokens_for_payment(TEXT, UUID, INT, TEXT, INT, TEXT, JSONB) TO service_role;
+
+-- ── 9. course_enrollments needs a unique (course_id, user_id) (#833 F13) ────
+-- The webhook upserts with onConflict 'course_id,user_id'. The table has no
+-- CREATE TABLE in the repo (it was made on the dashboard), so only add the index
+-- if the table exists and no unique index on exactly those columns is there yet;
+-- never fail the migration (duplicates already in the table are reported).
+DO $$
+BEGIN
+  IF to_regclass('public.course_enrollments') IS NULL THEN
+    RAISE NOTICE 'money_fixes_833: course_enrollments not found, unique index skipped';
+  ELSIF EXISTS (
+    SELECT 1 FROM pg_index i
+      JOIN pg_attribute a1 ON a1.attrelid = i.indrelid AND a1.attname = 'course_id'
+      JOIN pg_attribute a2 ON a2.attrelid = i.indrelid AND a2.attname = 'user_id'
+     WHERE i.indrelid = 'public.course_enrollments'::regclass
+       AND i.indisunique AND i.indpred IS NULL AND i.indnatts = 2
+       AND a1.attnum = ANY (i.indkey::int2[]) AND a2.attnum = ANY (i.indkey::int2[])
+  ) THEN
+    RAISE NOTICE 'money_fixes_833: unique (course_id, user_id) already present on course_enrollments';
+  ELSE
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_course_enrollments_course_user
+      ON public.course_enrollments (course_id, user_id);
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'money_fixes_833: could not create unique (course_id, user_id) on course_enrollments (duplicates?): %', SQLERRM;
 END $$;
