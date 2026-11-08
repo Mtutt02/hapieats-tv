@@ -118,7 +118,10 @@ describe('charge.refunded finds the Pro invoice in either payload shape (finding
 
     await deliver('charge.refunded', { id: 'ch_1', amount: 1299, amount_refunded: 1299, payment_intent: 'pi_1' })
 
-    expect(mocks.invoicePaymentsList).toHaveBeenCalledWith(expect.objectContaining({ payment: { type: 'payment_intent', payment_intent: 'pi_1' } }))
+    expect(mocks.invoicePaymentsList).toHaveBeenCalledWith(
+      expect.objectContaining({ payment: { type: 'payment_intent', payment_intent: 'pi_1' } }),
+      expect.objectContaining({ apiVersion: '2025-03-31.basil' }), // pinned per request: the SDK is on 2024-06-20
+    )
     expect(db.rows('pro_revenue_ledger')[0].refunded_cents).toBe(1299)
   })
 

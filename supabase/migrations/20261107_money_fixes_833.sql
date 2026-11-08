@@ -24,6 +24,14 @@
 --   3. Credits restore for abandoned partial-credit checkouts
 --   4. Pro revenue ledger + atomic payout run
 --   5. Atomic live / flavor gifts with request-id dedupe
+--   (6-9: round 3 - privileges, manual-review rows, token reversal, course index)
+--   10. dispute_won_for_payment            (round 4)
+--   11. cast_paid_vote                     (round 4)
+--   12. pending_credit_checkouts + claim/peek/settle/release/sweep (round 4)
+--   13. update_creator_streak ambiguity fix (round 4)
+--   Round 4 also: stripe_events/iap_events status DEFAULT 'completed' re-asserted + first-draft
+--   rows repaired (section 1), pro_revenue_ledger.stripe_payment_intent_id + partial unique
+--   index and the disputed_cents CHECK (section 4).
 -- ============================================================
 
 -- ── 1. Two-phase webhook event records ──────────────────────────────────
@@ -36,6 +44,17 @@ ALTER TABLE public.stripe_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP
 -- deployed, the old webhook inserts bare {id,type} rows and never completes
 -- them. Defaulting those to 'processing' would let the new claim_* re-fulfil
 -- them (double credit). claim_stripe_event sets 'processing' explicitly.
+-- ADD COLUMN IF NOT EXISTS does not touch an existing column, so a DB that ran the
+-- first draft of this migration (default 'processing') keeps that default unless it
+-- is set explicitly. SET DEFAULT is idempotent. (#833 round 4, S1)
+ALTER TABLE public.stripe_events ALTER COLUMN status SET DEFAULT 'completed';
+-- Rows the OLD webhook wrote while that first-draft default was live are 'processing'
+-- with no lease and attempts = 0 (claim_stripe_event always sets attempts >= 1 and a
+-- lease), so they are not in flight: they were fulfilled by the old code. Mark them
+-- completed, otherwise the new claim would treat them as a crashed delivery and
+-- re-fulfil them.
+UPDATE public.stripe_events SET status = 'completed'
+ WHERE status = 'processing' AND lease_until IS NULL AND attempts = 0;
 
 DO $$ BEGIN
   ALTER TABLE public.stripe_events
@@ -47,6 +66,9 @@ ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS lease_until  TIMESTAMPTZ;
 ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS attempts     INT  NOT NULL DEFAULT 0;
 ALTER TABLE public.iap_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 -- (default stays 'completed' here too, same reason; claim_iap_event is explicit)
+ALTER TABLE public.iap_events ALTER COLUMN status SET DEFAULT 'completed';
+UPDATE public.iap_events SET status = 'completed'
+ WHERE status = 'processing' AND lease_until IS NULL AND attempts = 0;
 
 DO $$ BEGIN
   ALTER TABLE public.iap_events
@@ -448,6 +470,30 @@ CREATE TABLE IF NOT EXISTS public.pro_revenue_ledger (
 );
 -- (a first run of this migration created the table without disputed_cents)
 ALTER TABLE public.pro_revenue_ledger ADD COLUMN IF NOT EXISTS disputed_cents BIGINT NOT NULL DEFAULT 0;
+-- ...and that ADD COLUMN carries no CHECK. Add it by name, once (guarded by pg_constraint).
+-- NOT VALID + VALIDATE: a legacy negative value must not abort the migration. (#833 round 4, S1)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'public.pro_revenue_ledger'::regclass
+       AND conname = 'pro_revenue_ledger_disputed_cents_check'
+  ) THEN
+    ALTER TABLE public.pro_revenue_ledger
+      ADD CONSTRAINT pro_revenue_ledger_disputed_cents_check CHECK (disputed_cents >= 0) NOT VALID;
+    BEGIN
+      ALTER TABLE public.pro_revenue_ledger VALIDATE CONSTRAINT pro_revenue_ledger_disputed_cents_check;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'money_fixes_833: pro_revenue_ledger_disputed_cents_check left NOT VALID: %', SQLERRM;
+    END;
+  END IF;
+END $$;
+-- Payment intent that paid the invoice: how a refund / dispute finds this row when the charge
+-- no longer names its invoice (API version basil). Partial unique: many rows may have none.
+-- (#833 round 4, N1/F9)
+ALTER TABLE public.pro_revenue_ledger ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pro_revenue_ledger_payment_intent
+  ON public.pro_revenue_ledger (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pro_revenue_ledger_month ON public.pro_revenue_ledger (month);
 ALTER TABLE public.pro_revenue_ledger ENABLE ROW LEVEL SECURITY; -- service role only
 
@@ -926,3 +972,376 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'money_fixes_833: could not create unique (course_id, user_id) on course_enrollments (duplicates?): %', SQLERRM;
 END $$;
+
+-- ═══ #833 ROUND 4 ═════════════════════════════════════════════════════════
+-- Everything below is idempotent (CREATE ... IF NOT EXISTS / CREATE OR REPLACE).
+-- The column/index for pro_revenue_ledger.stripe_payment_intent_id and the S1
+-- fixes (status defaults, disputed_cents CHECK) are next to the statements they
+-- repair, in sections 1 and 4 above.
+
+-- ── 10. A WON dispute: undo what charge.dispute.created did (#833 S3) ───────
+-- The merchant kept the money. The webhook sets pro_revenue_ledger.disputed_cents
+-- back to 0 itself; this function does the token side: the dispute share of the
+-- cumulative reversal target goes to 0. Tokens that were already clawed back are
+-- NOT given back automatically (the buyer may have chargebacked in bad faith, or
+-- spent the tokens elsewhere in the meantime): a human decides, via a
+-- money_exceptions row 'dispute_won_review'. Idempotent: the row is deduped by key
+-- and lowering dispute_tokens to 0 twice changes nothing.
+CREATE OR REPLACE FUNCTION public.dispute_won_for_payment(
+  p_key        TEXT,   -- 'stripe:pi:<payment_intent>:token-reversal'
+  p_dispute_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row public.token_reversals%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row FROM public.token_reversals WHERE effect_key = p_key FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('found', false, 'review', false);
+  END IF;
+
+  UPDATE public.token_reversals
+     SET dispute_tokens = 0, updated_at = now()
+   WHERE effect_key = p_key;
+
+  IF v_row.reversed > 0 THEN
+    INSERT INTO public.money_exceptions (dedupe_key, kind, user_id, ref, amount, detail)
+    VALUES ('dispute-won:' || p_key, 'dispute_won_review', v_row.user_id, p_key, v_row.reversed,
+            jsonb_build_object(
+              'dispute_id', p_dispute_id,
+              'purchased', v_row.purchased,
+              'reversed_total', v_row.reversed,
+              'refund_tokens', v_row.refund_tokens,
+              'dispute_tokens_before', v_row.dispute_tokens,
+              'note', 'Dispute WON: tokens already clawed back were not re-credited. Decide whether to give them back.'))
+    ON CONFLICT (dedupe_key) DO NOTHING;
+  END IF;
+
+  RETURN jsonb_build_object('found', true, 'review', v_row.reversed > 0, 'reversed', v_row.reversed);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.dispute_won_for_payment(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.dispute_won_for_payment(TEXT, TEXT) TO service_role;
+
+-- ── 11. Paid challenge vote: debit and vote in ONE transaction (#833 N3) ────
+-- The route used to debit tokens and then insert the vote. A second request for the
+-- same entry (double tap, retry) debited again and then failed on the unique key.
+-- Here the voter's wallet row is locked first, so concurrent requests queue; the vote
+-- is inserted under the existing unique key (entry_id, voter_id); tokens are debited
+-- ONLY if that insert actually happened. An insufficient balance raises, which rolls
+-- the vote back too.
+CREATE OR REPLACE FUNCTION public.cast_paid_vote(
+  p_user_id      UUID,
+  p_challenge_id UUID,
+  p_entry_id     UUID,
+  p_cost         INT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_balance INT;
+  v_vote_id UUID;
+BEGIN
+  IF p_cost IS NULL OR p_cost <= 0 THEN
+    RAISE EXCEPTION 'cast_paid_vote: cost must be positive';
+  END IF;
+
+  -- defense in depth: the route checks these too
+  IF NOT EXISTS (
+    SELECT 1
+      FROM public.challenge_entries e
+      JOIN public.creator_challenges c ON c.id = e.challenge_id
+     WHERE e.id = p_entry_id AND e.challenge_id = p_challenge_id
+       AND e.status = 'approved' AND c.status = 'voting' AND e.creator_id <> p_user_id
+  ) THEN
+    RAISE EXCEPTION 'ENTRY_NOT_VOTABLE';
+  END IF;
+
+  INSERT INTO public.hapi_tokens (user_id, balance) VALUES (p_user_id, 0)
+  ON CONFLICT (user_id) DO NOTHING;
+  SELECT balance INTO v_balance FROM public.hapi_tokens WHERE user_id = p_user_id FOR UPDATE;
+
+  INSERT INTO public.challenge_votes (entry_id, voter_id, tokens_spent)
+  VALUES (p_entry_id, p_user_id, p_cost)
+  ON CONFLICT (entry_id, voter_id) DO NOTHING
+  RETURNING id INTO v_vote_id;
+
+  IF v_vote_id IS NULL THEN
+    RETURN jsonb_build_object('status', 'duplicate', 'tokens_spent', 0);
+  END IF;
+
+  IF v_balance < p_cost THEN
+    RAISE EXCEPTION 'INSUFFICIENT_BALANCE: required %, available %', p_cost, v_balance
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  PERFORM public.record_token_movement(
+    p_user_id     := p_user_id,
+    p_type        := 'challenge_vote',
+    p_amount      := -p_cost,
+    p_description := 'Voted on challenge entry',
+    p_metadata    := jsonb_build_object('challenge_id', p_challenge_id, 'entry_id', p_entry_id, 'vote_id', v_vote_id)
+  );
+
+  RETURN jsonb_build_object('status', 'voted', 'vote_id', v_vote_id, 'tokens_spent', p_cost);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.cast_paid_vote(UUID, UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cast_paid_vote(UUID, UUID, UUID, INT) TO service_role;
+
+-- ── 12. One open credit checkout per (buyer, video) (#833 S2, #6 sweeper) ───
+-- /api/credits/checkout checked "already owned", then debited, in separate steps: two
+-- taps (or two tabs) both passed the check and both debited. The route now claims
+-- (buyer_id, video_id) here BEFORE the debit; the primary key makes the second claim
+-- lose ('in_progress'). The row is released when the purchase is fulfilled, when the
+-- credits are restored, or (crash between the debit and the Stripe session) swept:
+-- an expired row is settled the next time that buyer claims, or by
+-- sweep_stale_credit_checkouts(). Settling restores the credits under the SAME key the
+-- route and webhook use (credit-checkout:<ref>:restore), so it can never restore twice.
+CREATE TABLE IF NOT EXISTS public.pending_credit_checkouts (
+  buyer_id     UUID NOT NULL,
+  video_id     UUID NOT NULL,
+  checkout_ref TEXT NOT NULL,
+  gift_used    NUMERIC NOT NULL DEFAULT 0,
+  loan_used    NUMERIC NOT NULL DEFAULT 0,
+  session_url  TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (buyer_id, video_id)
+);
+ALTER TABLE public.pending_credit_checkouts ENABLE ROW LEVEL SECURITY; -- service role only
+REVOKE ALL ON public.pending_credit_checkouts FROM anon, authenticated;
+CREATE INDEX IF NOT EXISTS idx_pending_credit_checkouts_expires ON public.pending_credit_checkouts (expires_at);
+
+-- Settle one pending row that is past its expiry (or being replaced): give the credits
+-- back only if they were really spent for it and the buyer does not own the video, then
+-- delete the row. Returns 'restored' | 'owned' | 'not_debited' | 'none'.
+CREATE OR REPLACE FUNCTION public.settle_credit_checkout(p_buyer UUID, p_video UUID)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row   public.pending_credit_checkouts%ROWTYPE;
+  v_owned BOOLEAN;
+  v_spent BOOLEAN;
+BEGIN
+  SELECT * INTO v_row FROM public.pending_credit_checkouts
+   WHERE buyer_id = p_buyer AND video_id = p_video FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN 'none';
+  END IF;
+
+  SELECT EXISTS (SELECT 1 FROM public.purchases WHERE buyer_id = p_buyer AND video_id = p_video) INTO v_owned;
+  SELECT EXISTS (
+    SELECT 1 FROM public.credit_ledger
+     WHERE user_id = p_buyer AND reference_type = 'ppv' AND reference_id = p_video::text
+       AND entry_type IN ('spend_gift', 'spend_loan') AND created_at >= v_row.created_at
+  ) INTO v_spent;
+
+  DELETE FROM public.pending_credit_checkouts WHERE buyer_id = p_buyer AND video_id = p_video;
+
+  IF v_owned THEN
+    RETURN 'owned';
+  END IF;
+  IF NOT v_spent OR v_row.gift_used + v_row.loan_used <= 0 THEN
+    RETURN 'not_debited';
+  END IF;
+
+  PERFORM public.restore_credits_once(
+    'credit-checkout:' || v_row.checkout_ref || ':restore', p_buyer, v_row.gift_used, v_row.loan_used,
+    v_row.checkout_ref, 'Credits returned: abandoned checkout');
+  RETURN 'restored';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.claim_credit_checkout(
+  p_buyer       UUID,
+  p_video       UUID,
+  p_ref         TEXT,
+  p_gift        NUMERIC,
+  p_loan        NUMERIC,
+  p_ttl_seconds INT DEFAULT 2100   -- longer than the 31 minute Stripe session
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row public.pending_credit_checkouts%ROWTYPE;
+  v_n   INT;
+BEGIN
+  INSERT INTO public.pending_credit_checkouts (buyer_id, video_id, checkout_ref, gift_used, loan_used, expires_at)
+  VALUES (p_buyer, p_video, p_ref, COALESCE(p_gift, 0), COALESCE(p_loan, 0), now() + make_interval(secs => p_ttl_seconds))
+  ON CONFLICT (buyer_id, video_id) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n = 1 THEN
+    RETURN jsonb_build_object('status', 'claimed');
+  END IF;
+
+  SELECT * INTO v_row FROM public.pending_credit_checkouts
+   WHERE buyer_id = p_buyer AND video_id = p_video FOR UPDATE;
+  IF NOT FOUND THEN
+    -- released between our insert attempt and the lock: let the caller retry
+    RETURN jsonb_build_object('status', 'in_progress');
+  END IF;
+  IF v_row.expires_at > now() THEN
+    RETURN jsonb_build_object('status', 'in_progress', 'session_url', v_row.session_url);
+  END IF;
+
+  -- the earlier attempt is past its expiry: give its credits back (if spent), then take over
+  PERFORM public.settle_credit_checkout(p_buyer, p_video);
+  INSERT INTO public.pending_credit_checkouts (buyer_id, video_id, checkout_ref, gift_used, loan_used, expires_at)
+  VALUES (p_buyer, p_video, p_ref, COALESCE(p_gift, 0), COALESCE(p_loan, 0), now() + make_interval(secs => p_ttl_seconds))
+  ON CONFLICT (buyer_id, video_id) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('status', CASE WHEN v_n = 1 THEN 'claimed' ELSE 'in_progress' END);
+END;
+$$;
+
+-- Read-only-ish look at the pair BEFORE the route computes anything: 'in_progress' when a live
+-- checkout holds it (the route answers 409 and hands back the Stripe URL); an EXPIRED row is settled
+-- right here (credits restored once if they were spent), which matters because after a crash the
+-- buyer has no credits left and would otherwise never get as far as claim_credit_checkout.
+CREATE OR REPLACE FUNCTION public.peek_credit_checkout(p_buyer UUID, p_video UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_row public.pending_credit_checkouts%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row FROM public.pending_credit_checkouts
+   WHERE buyer_id = p_buyer AND video_id = p_video FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'none');
+  END IF;
+  IF v_row.expires_at > now() THEN
+    RETURN jsonb_build_object('status', 'in_progress', 'session_url', v_row.session_url);
+  END IF;
+  PERFORM public.settle_credit_checkout(p_buyer, p_video);
+  RETURN jsonb_build_object('status', 'none');
+END;
+$$;
+
+-- Release the claim once the purchase is fulfilled or the credits were restored. Matches
+-- on checkout_ref so a late release from an OLD attempt can never clear a newer claim.
+CREATE OR REPLACE FUNCTION public.release_credit_checkout(p_buyer UUID, p_video UUID, p_ref TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  DELETE FROM public.pending_credit_checkouts
+   WHERE buyer_id = p_buyer AND video_id = p_video AND checkout_ref = p_ref;
+  RETURN FOUND;
+END;
+$$;
+
+-- For a scheduler (NOT scheduled by this migration): settle every expired pending row.
+CREATE OR REPLACE FUNCTION public.sweep_stale_credit_checkouts(p_limit INT DEFAULT 100)
+RETURNS INT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r RECORD;
+  v_n INT := 0;
+BEGIN
+  FOR r IN
+    SELECT buyer_id, video_id FROM public.pending_credit_checkouts
+     WHERE expires_at < now() ORDER BY expires_at LIMIT p_limit
+  LOOP
+    PERFORM public.settle_credit_checkout(r.buyer_id, r.video_id);
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN v_n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settle_credit_checkout(UUID, UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.claim_credit_checkout(UUID, UUID, TEXT, NUMERIC, NUMERIC, INT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.peek_credit_checkout(UUID, UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.release_credit_checkout(UUID, UUID, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sweep_stale_credit_checkouts(INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_credit_checkout(UUID, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.claim_credit_checkout(UUID, UUID, TEXT, NUMERIC, NUMERIC, INT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.peek_credit_checkout(UUID, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.release_credit_checkout(UUID, UUID, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sweep_stale_credit_checkouts(INT) TO service_role;
+
+-- ── 13. update_creator_streak: "column reference current_streak is ambiguous" (#833 F18, pre-existing) ─
+-- RETURNS TABLE(current_streak ...) makes current_streak an OUT variable, which clashes with the
+-- creator_streaks.current_streak column inside the body, so the function failed on every call and
+-- the streak route that grants bonus tokens depended on it. Same body, resolved with
+-- #variable_conflict use_column; search_path pinned; ACL re-asserted (service_role only).
+CREATE OR REPLACE FUNCTION public.update_creator_streak(
+  p_creator_id    UUID,
+  p_activity_type TEXT
+)
+RETURNS TABLE(current_streak INT, milestone TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  v_today       DATE := CURRENT_DATE;
+  v_last_date   DATE;
+  v_curr_streak INT;
+  v_longest     INT;
+  v_milestone   TEXT := NULL;
+BEGIN
+  INSERT INTO creator_streaks (creator_id) VALUES (p_creator_id)
+  ON CONFLICT (creator_id) DO NOTHING;
+
+  SELECT last_activity_date, current_streak, longest_streak
+    INTO v_last_date, v_curr_streak, v_longest
+    FROM creator_streaks WHERE creator_id = p_creator_id;
+
+  IF v_last_date IS NULL OR v_last_date < v_today - INTERVAL '1 day' THEN
+    v_curr_streak := 1;
+  ELSIF v_last_date = v_today - INTERVAL '1 day' THEN
+    v_curr_streak := v_curr_streak + 1;
+  ELSE
+    v_curr_streak := GREATEST(v_curr_streak, 1);
+  END IF;
+
+  IF v_curr_streak > v_longest THEN v_longest := v_curr_streak; END IF;
+
+  IF    v_curr_streak >= 90 THEN v_milestone := '90';
+  ELSIF v_curr_streak >= 30 THEN v_milestone := '30';
+  ELSIF v_curr_streak >= 7  THEN v_milestone := '7';
+  END IF;
+
+  UPDATE creator_streaks SET
+    current_streak  = v_curr_streak,
+    longest_streak  = v_longest,
+    last_activity_date = v_today,
+    total_posts     = CASE WHEN p_activity_type = 'post'      THEN total_posts + 1      ELSE total_posts      END,
+    total_streams   = CASE WHEN p_activity_type = 'stream'    THEN total_streams + 1    ELSE total_streams    END,
+    total_challenge_entries = CASE WHEN p_activity_type = 'challenge'
+                                   THEN total_challenge_entries + 1 ELSE total_challenge_entries END,
+    updated_at = NOW()
+  WHERE creator_id = p_creator_id;
+
+  RETURN QUERY SELECT v_curr_streak, v_milestone;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.update_creator_streak(UUID, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_creator_streak(UUID, TEXT) TO service_role;

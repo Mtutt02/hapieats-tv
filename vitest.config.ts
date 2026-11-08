@@ -6,5 +6,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // lib/stripe-shapes falls back to a REST call when STRIPE_SECRET_KEY is set: never in tests
+    env: { STRIPE_SECRET_KEY: '' },
   },
 })

@@ -32,6 +32,12 @@ import { paymentsPausedResponse } from '@/lib/payments-pause'
 // payment (or the buyer cancels and walks away) the webhook gives the credits back.
 const SESSION_TTL_SECONDS = 31 * 60
 
+const IN_PROGRESS = (stripeUrl?: string | null) => ({
+  error: 'You already have a checkout open for this video. Finish it, or try again in a few minutes.',
+  mode: 'in_progress',
+  stripeUrl: stripeUrl ?? null,
+})
+
 const CHECKOUT_FAILED = {
   error: 'We could not start checkout. Your credits were returned — please try again.',
 }
@@ -85,20 +91,36 @@ export async function POST(req: NextRequest) {
     }
 
     // Already owned: never debit credits for something the buyer has (a double tap, or a
-    // purchase that completed in another tab). Checked BEFORE the debit.
-    const { data: owned, error: ownedErr } = await serviceClient
-      .from('purchases')
-      .select('video_id')
-      .eq('buyer_id', user.id)
-      .eq('video_id', videoId)
-      .maybeSingle()
-    if (ownedErr) {
-      console.error('[credits/checkout] ownership check failed:', ownedErr)
+    // purchase that completed in another tab). Checked BEFORE the claim (cheap exit) and again
+    // AFTER it (the claim is what makes the check race-safe). limit(1), not maybeSingle(): if
+    // duplicate purchase rows ever exist, maybeSingle() errors and the route would 500.
+    const alreadyOwned = async () => {
+      const { data, error } = await serviceClient
+        .from('purchases')
+        .select('video_id')
+        .eq('buyer_id', user.id)
+        .eq('video_id', videoId)
+        .limit(1)
+      if (error) throw new Error(`ownership check failed: ${error.message}`)
+      return (data?.length ?? 0) > 0
+    }
+    const OWNED = { success: true, mode: 'already_owned', creditsUsed: 0, message: 'You already own this video.' }
+    try {
+      if (await alreadyOwned()) return NextResponse.json(OWNED)
+    } catch (err) {
+      console.error('[credits/checkout] ownership check failed:', err)
       return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
     }
-    if (owned) {
-      return NextResponse.json({ success: true, mode: 'already_owned', creditsUsed: 0, message: 'You already own this video.' })
+
+    // Is a checkout for this buyer + video already open? (Its credits are already debited, so the
+    // balance below may be 0: without this the buyer would be told "use standard checkout".) An
+    // expired one is settled here, i.e. its credits come back first.
+    const { data: open, error: openErr } = await serviceClient.rpc('peek_credit_checkout', { p_buyer: user.id, p_video: videoId })
+    if (openErr) {
+      console.error('[credits/checkout] peek_credit_checkout failed:', openErr)
+      return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
     }
+    if (open?.status === 'in_progress') return NextResponse.json(IN_PROGRESS(open.session_url), { status: 409 })
 
     const priceUsd = parseFloat(video.price)
     const creditBalance = await getCreditBalance(user.id)
@@ -109,17 +131,56 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No credits available — use standard checkout' }, { status: 400 })
     }
 
-    // Deduct credits first (atomic — any DB error throws before Stripe)
+    // Claim (buyer, video) BEFORE touching the balance: one open credit checkout per buyer and
+    // video (pending_credit_checkouts primary key). A second tap / tab / retry gets 409 here and
+    // cannot reach the debit. The claim is released when the purchase is fulfilled or the credits
+    // are restored; if we crash in between, the expired row is settled (credits restored once).
     const checkoutRef = randomUUID()
-    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, checkoutRef, why)
-    await deductCredits({
-      userId: user.id,
-      giftUsed: application.giftUsed,
-      loanUsed: application.loanUsed,
-      referenceId: videoId,
-      referenceType: 'ppv',
-      notes: `Credits applied to PPV: ${video.title}`,
+    const { data: claim, error: claimErr } = await serviceClient.rpc('claim_credit_checkout', {
+      p_buyer: user.id,
+      p_video: videoId,
+      p_ref: checkoutRef,
+      p_gift: application.giftUsed,
+      p_loan: application.loanUsed,
     })
+    if (claimErr) {
+      console.error('[credits/checkout] claim_credit_checkout failed:', claimErr)
+      return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
+    }
+    if (claim?.status !== 'claimed') {
+      return NextResponse.json(IN_PROGRESS(claim?.session_url), { status: 409 })
+    }
+    const release = () => releaseClaim(serviceClient, user.id, videoId, checkoutRef)
+    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, checkoutRef, why, videoId)
+
+    // Re-check ownership INSIDE the claim: a purchase that finished after the first check is
+    // visible now, and nobody else can start a debit for this pair until we release.
+    try {
+      if (await alreadyOwned()) {
+        await release()
+        return NextResponse.json(OWNED)
+      }
+    } catch (err) {
+      console.error('[credits/checkout] ownership re-check failed:', err)
+      await release()
+      return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
+    }
+
+    // Deduct credits (any DB error throws before Stripe). If the debit itself fails, nothing was
+    // reserved: free the claim so the buyer is not locked out, then surface the error as before.
+    try {
+      await deductCredits({
+        userId: user.id,
+        giftUsed: application.giftUsed,
+        loanUsed: application.loanUsed,
+        referenceId: videoId,
+        referenceType: 'ppv',
+        notes: `Credits applied to PPV: ${video.title}`,
+      })
+    } catch (err) {
+      await release()
+      throw err
+    }
 
     if (application.fullyCoveredByCredits) {
       // Unlock the video directly — no Stripe needed
@@ -135,6 +196,7 @@ export async function POST(req: NextRequest) {
         await restore('ppv unlock failed')
         return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
       }
+      await release() // fulfilled: the purchase row now says "owned"
 
       return NextResponse.json({
         success: true,
@@ -204,6 +266,16 @@ export async function POST(req: NextRequest) {
       await restore('ppv checkout session failed')
       return NextResponse.json(CHECKOUT_FAILED, { status: 502 })
     }
+
+    // Remember the Stripe URL on the claim so a second tap can send the buyer back to it.
+    // Best effort: the claim already protects the money.
+    const { error: urlErr } = await serviceClient
+      .from('pending_credit_checkouts')
+      .update({ session_url: session.url })
+      .eq('buyer_id', user.id)
+      .eq('video_id', videoId)
+      .eq('checkout_ref', checkoutRef)
+    if (urlErr) console.error('[credits/checkout] could not store the session url on the claim:', urlErr)
 
     return NextResponse.json({
       success: false,
@@ -351,6 +423,7 @@ async function restoreCredits(
   application: { giftUsed: number; loanUsed: number },
   checkoutRef: string,
   why: string,
+  videoId?: string,
 ) {
   const key = `credit-checkout:${checkoutRef}:restore`
   const { error } = await service.rpc('restore_credits_once', {
@@ -361,7 +434,12 @@ async function restoreCredits(
     p_ref: checkoutRef,
     p_notes: `Credits returned: ${why}`,
   })
-  if (!error) return
+  if (!error) {
+    // credits are back: the (buyer, video) claim is no longer needed
+    if (videoId) await releaseClaim(service, userId, videoId, checkoutRef)
+    return
+  }
+  // restore failed: KEEP the claim so the sweeper / next claim settles it (same restore key)
 
   console.error('[credits/checkout] CREDIT RESTORE FAILED — recording for manual review:', key, error)
   try {
@@ -380,5 +458,20 @@ async function restoreCredits(
     if (recordErr) console.error('[credits/checkout] could not record the failed restore either:', recordErr)
   } catch (e) {
     console.error('[credits/checkout] could not record the failed restore either:', e)
+  }
+}
+
+/** Free the (buyer, video) claim. Best effort: an unreleased claim just expires and is settled. */
+async function releaseClaim(
+  service: ReturnType<typeof createServiceClient>,
+  userId: string,
+  videoId: string,
+  checkoutRef: string,
+) {
+  try {
+    const { error } = await service.rpc('release_credit_checkout', { p_buyer: userId, p_video: videoId, p_ref: checkoutRef })
+    if (error) console.error('[credits/checkout] could not release the checkout claim (it will expire):', error)
+  } catch (e) {
+    console.error('[credits/checkout] could not release the checkout claim (it will expire):', e)
   }
 }

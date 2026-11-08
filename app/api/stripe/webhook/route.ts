@@ -5,7 +5,11 @@ import { createServiceClient } from '@/lib/supabase/server'
 import Stripe from 'stripe'
 import { handleProCheckoutCompleted, handleProSubscriptionEvent } from '@/lib/academy/pro'
 import {
-  chargeInvoiceId,
+  chargeDirectInvoiceId,
+  currentPeriodEndIso,
+  invoiceIdForPaymentIntent,
+  invoicePaymentIntentFromApi,
+  invoicePaymentIntentId,
   invoiceSubscriptionId,
   invoiceSubscriptionMetadata,
   invoiceTaxCents,
@@ -18,6 +22,71 @@ const LEASE_SECONDS = 120
 /** A failed write must fail the event so Stripe retries it. */
 function must(error: { message?: string } | null | undefined, what: string) {
   if (error) throw new Error(`${what}: ${error.message ?? 'database error'}`)
+}
+
+/**
+ * Write a refund / dispute amount onto the Pro revenue ledger row a charge paid. Matching order:
+ *   1. charge.invoice (API versions before basil), by stripe_invoice_id
+ *   2. the payment intent stamped on the row at invoice.paid, by stripe_payment_intent_id
+ *      (basil: the charge no longer names its invoice)
+ *   3. last resort: InvoicePayments lookup of the invoice for this payment intent
+ * No match anywhere is a no-op: the charge is not a Pro invoice (tokens, PPV, ...). Amounts are
+ * absolute values from Stripe, so a replay changes nothing. Returns whether a row was updated.
+ */
+async function patchProLedger(
+  supabase: ReturnType<typeof createServiceClient>,
+  charge: Stripe.Charge,
+  patch: { refunded_cents: number } | { disputed_cents: number },
+  eventType: string,
+): Promise<boolean> {
+  const pi = typeof charge.payment_intent === 'string'
+    ? charge.payment_intent
+    : (charge.payment_intent as { id?: string } | null)?.id ?? null
+  const touch = async (column: 'stripe_invoice_id' | 'stripe_payment_intent_id', value: string) => {
+    const { data, error } = await supabase
+      .from('pro_revenue_ledger')
+      .update(patch)
+      .eq(column, value)
+      .select('stripe_invoice_id')
+    must(error, 'pro revenue refund/dispute')
+    return (data?.length ?? 0) > 0
+  }
+
+  const direct = chargeDirectInvoiceId(charge)
+  if (direct && (await touch('stripe_invoice_id', direct))) return true
+  if (pi && (await touch('stripe_payment_intent_id', pi))) return true
+  if (!direct && pi) {
+    let looked: string | null = null
+    try {
+      looked = await invoiceIdForPaymentIntent(stripe, pi)
+    } catch (err) {
+      // Lookup unavailable: do not fail the whole event (the token reversal that follows must
+      // still run). The charge stays unmatched and is logged.
+      console.error(`[stripe/webhook] ${eventType}: InvoicePayments lookup failed for ${pi}:`, err)
+    }
+    if (looked && (await touch('stripe_invoice_id', looked))) return true
+  }
+  return false
+}
+
+/**
+ * Free the pending_credit_checkouts claim of a partial-credit PPV checkout. Best effort and keyed
+ * by checkoutRef (older sessions have none: nothing to release): an unreleased claim only expires
+ * and is settled, and settling is safe because it restores under the same key as everything else.
+ */
+async function releaseCreditClaim(
+  supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  videoId: string | undefined,
+  checkoutRef: string | undefined,
+) {
+  if (!videoId || !checkoutRef) return
+  try {
+    const { error } = await supabase.rpc('release_credit_checkout', { p_buyer: userId, p_video: videoId, p_ref: checkoutRef })
+    if (error) console.error('[stripe/webhook] could not release the credit checkout claim (it will expire):', error)
+  } catch (err) {
+    console.error('[stripe/webhook] could not release the credit checkout claim (it will expire):', err)
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -241,6 +310,8 @@ export async function POST(req: NextRequest) {
             )
             must(error, 'credit ppv purchase')
             console.log(`[webhook] credit_ppv unlocked video ${creditVideoId} for user ${userId}`)
+            // fulfilled: free the (buyer, video) claim /api/credits/checkout took before the debit
+            await releaseCreditClaim(supabase, userId, creditVideoId, session.metadata?.checkoutRef)
           }
         }
 
@@ -289,6 +360,8 @@ export async function POST(req: NextRequest) {
               p_notes: `Credits returned: checkout ${event.type === 'checkout.session.expired' ? 'expired' : 'payment failed'} (${session.id})`,
             })
             must(error, 'credit restore')
+            // credits are back: free the (buyer, video) claim so the buyer can try again
+            await releaseCreditClaim(supabase, userId, session.metadata?.videoId, checkoutRef)
           }
         }
         break
@@ -306,12 +379,15 @@ export async function POST(req: NextRequest) {
         }
 
         if (userId && channelId) {
+          // From API version basil the period end is on the subscription item, not the
+          // subscription. If neither is there the column is left as it was (never throw).
+          const periodEnd = currentPeriodEndIso(sub)
           const { error } = await supabase.from('subscriptions').upsert({
             subscriber_id: userId,
             channel_id: channelId,
             stripe_subscription_id: sub.id,
             status: sub.status,
-            current_period_end: new Date((sub as any).current_period_end * 1000).toISOString(),
+            ...(periodEnd ? { current_period_end: periodEnd } : {}),
           }, { onConflict: 'stripe_subscription_id' })
           must(error, 'channel subscription')
         } else if (sub.metadata?.kind !== 'pro_subscription') {
@@ -374,9 +450,22 @@ export async function POST(req: NextRequest) {
         if (isPro && invoice.id && collected > 0) {
           const paidAtSec = invoice.status_transitions?.paid_at ?? invoice.created
           const paidAt = new Date(paidAtSec * 1000)
+          // The payment intent is what links a later refund / dispute back to this row when
+          // the charge no longer names its invoice (basil). Old shape: invoice.payment_intent.
+          // Basil: invoice.payments (only if expanded), else one InvoicePayments lookup. A lookup
+          // failure is not fatal here: the refund path has the same lookup as its last resort.
+          let paymentIntentId = invoicePaymentIntentId(invoice)
+          if (!paymentIntentId) {
+            try {
+              paymentIntentId = await invoicePaymentIntentFromApi(stripe, invoice.id)
+            } catch (err) {
+              console.error(`[stripe/webhook] invoice.paid ${invoice.id}: could not look up the payment intent (refund matching will retry the lookup):`, err)
+            }
+          }
           const { error } = await supabase.from('pro_revenue_ledger').upsert(
             {
               stripe_invoice_id: invoice.id,
+              stripe_payment_intent_id: paymentIntentId,
               user_id: subMeta.user_id ?? null,
               stripe_subscription_id: subId,
               amount_cents: collected,
@@ -426,16 +515,13 @@ export async function POST(req: NextRequest) {
           ?? (dispute?.charge
             ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
             : null)
-        const chargeInvoice = ledgerCharge ? await chargeInvoiceId(stripe, ledgerCharge) : null
-        if (chargeInvoice) {
-          const patch = isDispute
-            ? { disputed_cents: Number(dispute?.amount ?? 0) }
-            : { refunded_cents: charge?.amount_refunded ?? 0 }
-          const { error } = await supabase
-            .from('pro_revenue_ledger')
-            .update(patch)
-            .eq('stripe_invoice_id', chargeInvoice)
-          must(error, 'pro revenue refund/dispute')
+        if (ledgerCharge) {
+          await patchProLedger(
+            supabase,
+            ledgerCharge,
+            isDispute ? { disputed_cents: Number(dispute?.amount ?? 0) } : { refunded_cents: charge?.amount_refunded ?? 0 },
+            event.type,
+          )
         }
 
         const paymentIntentId = isDispute
@@ -498,6 +584,44 @@ export async function POST(req: NextRequest) {
         } else {
           console.log(`[stripe/webhook] ${event.type}: session ${session.id} is checkoutMode=${checkoutMode ?? 'unknown'} — no token reversal applicable`)
         }
+        break
+      }
+
+      // ── Dispute closed ────────────────────────────────────────────────────────
+      // Only a WON dispute changes anything: the merchant keeps the money, so the Pro
+      // ledger no longer loses it (disputed_cents back to 0) and the dispute share of the
+      // token reversal is dropped. Tokens already clawed back are NOT re-credited here: a
+      // person reviews that (money_exceptions 'dispute_won_review'). A lost dispute leaves
+      // the charge.dispute.created effects as they are. Every step is absolute / deduped,
+      // so a replay changes nothing.
+      case 'charge.dispute.closed': {
+        const dispute = event.data.object as Stripe.Dispute
+        if (dispute.status !== 'won') {
+          console.log(`[stripe/webhook] ${event.type} ${dispute.id}: status=${dispute.status} — nothing to undo`)
+          break
+        }
+
+        const disputeCharge: Stripe.Charge | null = dispute.charge
+          ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
+          : null
+        if (disputeCharge) {
+          await patchProLedger(supabase, disputeCharge, { disputed_cents: 0 }, event.type)
+        }
+
+        const disputePi = typeof dispute.payment_intent === 'string'
+          ? dispute.payment_intent
+          : (dispute.payment_intent as { id?: string } | null)?.id
+            ?? (typeof disputeCharge?.payment_intent === 'string' ? disputeCharge.payment_intent : null)
+        if (!disputePi) {
+          console.error(`[stripe/webhook] ${event.type}: no payment_intent on dispute ${dispute.id} — token side skipped`)
+          break
+        }
+        const { data: won, error: wonErr } = await supabase.rpc('dispute_won_for_payment', {
+          p_key: `stripe:pi:${disputePi}:token-reversal`,
+          p_dispute_id: dispute.id,
+        })
+        must(wonErr, 'dispute won')
+        console.log(`[stripe/webhook] ${event.type} ${dispute.id}: won — dispute tokens released from target; review row ${won?.review ? 'written' : 'not needed'}`)
         break
       }
     }

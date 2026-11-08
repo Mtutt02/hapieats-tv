@@ -28,12 +28,14 @@ const UNIQUES: Record<string, string[][]> = {
   creator_wallets: [['creator_id']],
   pro_payout_pool: [['month']],
   pro_pool_earnings: [['creator_id', 'month']],
-  pro_revenue_ledger: [['stripe_invoice_id']],
+  pro_revenue_ledger: [['stripe_invoice_id'], ['stripe_payment_intent_id']], // second = partial unique (NULLs allowed)
   class_enrollments: [['class_id', 'user_id']],
   course_enrollments: [['course_id', 'user_id']],
   program_enrollments: [['program_id', 'user_id']],
   token_reversals: [['effect_key']],
   money_exceptions: [['dedupe_key']],
+  challenge_votes: [['entry_id', 'voter_id']],
+  pending_credit_checkouts: [['buyer_id', 'video_id']],
 }
 
 export class MoneyDb {
@@ -97,7 +99,7 @@ export class MoneyDb {
   // ── Table helpers used by Query and by the sql_* functions ────────────────
   violates(table: string, row: Row): boolean {
     return (UNIQUES[table] ?? []).some(cols =>
-      this.rows(table).some(r => cols.every(c => r[c] !== undefined && r[c] === row[c])))
+      this.rows(table).some(r => cols.every(c => r[c] != null && r[c] === row[c])))
   }
   insertRow(table: string, row: Row): Row {
     if (this.violates(table, row)) this.raise(`duplicate key value violates unique constraint on ${table}`, '23505')
@@ -263,6 +265,84 @@ export class MoneyDb {
       Object.assign(pool, { gross_cents: gross, pool_cents: a.p_pool_cents, total_credits: a.p_total_credits, distributed: true })
       return { status: 'distributed', creators_paid: n, distributed_cents: paid, gross_cents: gross }
     })
+  }
+
+  /** Mirrors cast_paid_vote (section 11): wallet debit and vote row in one transaction. */
+  sql_cast_paid_vote(a: Row) {
+    return this.atomically(() => {
+      if (!(a.p_cost > 0)) this.raise('cast_paid_vote: cost must be positive')
+      const entry = this.rows('challenge_entries').find(r => r.id === a.p_entry_id && r.challenge_id === a.p_challenge_id && r.status === 'approved')
+      const challenge = this.rows('creator_challenges').find(r => r.id === a.p_challenge_id && r.status === 'voting')
+      if (!entry || !challenge || entry.creator_id === a.p_user_id) this.raise('ENTRY_NOT_VOTABLE')
+      if (this.rows('challenge_votes').some(r => r.entry_id === a.p_entry_id && r.voter_id === a.p_user_id)) {
+        return { status: 'duplicate', tokens_spent: 0 }
+      }
+      const vote = this.insertRow('challenge_votes', { entry_id: a.p_entry_id, voter_id: a.p_user_id, tokens_spent: a.p_cost })
+      // raises INSUFFICIENT_BALANCE -> atomically() rolls the vote row back with it
+      this.sql_record_token_movement({ p_user_id: a.p_user_id, p_type: 'challenge_vote', p_amount: -a.p_cost, p_metadata: {} })
+      return { status: 'voted', vote_id: vote.id, tokens_spent: a.p_cost }
+    })
+  }
+
+  /** Mirrors dispute_won_for_payment (section 10). */
+  sql_dispute_won_for_payment(a: Row) {
+    return this.atomically(() => {
+      const r = this.rows('token_reversals').find(x => x.effect_key === a.p_key)
+      if (!r) return { found: false, review: false }
+      r.dispute_tokens = 0
+      if (r.reversed > 0 && !this.rows('money_exceptions').some(x => x.dedupe_key === `dispute-won:${a.p_key}`)) {
+        this.rows('money_exceptions').push({
+          dedupe_key: `dispute-won:${a.p_key}`, kind: 'dispute_won_review', user_id: r.user_id, ref: a.p_key,
+          amount: r.reversed, resolved_at: null, detail: { dispute_id: a.p_dispute_id },
+        })
+      }
+      return { found: true, review: r.reversed > 0, reversed: r.reversed }
+    })
+  }
+
+  /** Mirrors claim / settle / release_credit_checkout (section 12). */
+  sql_claim_credit_checkout(a: Row) {
+    return this.atomically(() => {
+      const mk = () => ({
+        buyer_id: a.p_buyer, video_id: a.p_video, checkout_ref: a.p_ref, gift_used: a.p_gift ?? 0, loan_used: a.p_loan ?? 0,
+        session_url: null, created_at: this.now, expires_at: this.now + (a.p_ttl_seconds ?? 2100) * 1000,
+      })
+      const row = this.rows('pending_credit_checkouts').find(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video)
+      if (!row) { this.rows('pending_credit_checkouts').push(mk()); return { status: 'claimed' } }
+      if (row.expires_at > this.now) return { status: 'in_progress', session_url: row.session_url }
+      this.sql_settle_credit_checkout({ p_buyer: a.p_buyer, p_video: a.p_video })
+      this.rows('pending_credit_checkouts').push(mk())
+      return { status: 'claimed' }
+    })
+  }
+  sql_settle_credit_checkout(a: Row) {
+    const i = this.rows('pending_credit_checkouts').findIndex(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video)
+    if (i < 0) return 'none'
+    const row = this.rows('pending_credit_checkouts')[i]
+    const owned = this.rows('purchases').some(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video)
+    const spent = this.rows('credit_ledger').some(r => r.user_id === a.p_buyer && r.reference_type === 'ppv' &&
+      r.reference_id === a.p_video && ['spend_gift', 'spend_loan'].includes(r.entry_type))
+    this.rows('pending_credit_checkouts').splice(i, 1)
+    if (owned) return 'owned'
+    if (!spent || Number(row.gift_used) + Number(row.loan_used) <= 0) return 'not_debited'
+    this.sql_restore_credits_once({ p_key: `credit-checkout:${row.checkout_ref}:restore`, p_user_id: a.p_buyer,
+      p_gift: row.gift_used, p_loan: row.loan_used, p_ref: row.checkout_ref })
+    return 'restored'
+  }
+  sql_peek_credit_checkout(a: Row) {
+    return this.atomically(() => {
+      const row = this.rows('pending_credit_checkouts').find(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video)
+      if (!row) return { status: 'none' }
+      if (row.expires_at > this.now) return { status: 'in_progress', session_url: row.session_url }
+      this.sql_settle_credit_checkout(a)
+      return { status: 'none' }
+    })
+  }
+  sql_release_credit_checkout(a: Row) {
+    const i = this.rows('pending_credit_checkouts').findIndex(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video && r.checkout_ref === a.p_ref)
+    if (i < 0) return false
+    this.rows('pending_credit_checkouts').splice(i, 1)
+    return true
   }
 
   sql_send_live_gift(a: Row) {
