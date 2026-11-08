@@ -53,3 +53,83 @@ All new functions: `SECURITY DEFINER`, `SET search_path = public`, EXECUTE revok
 6. `goals/[id]/contribute` (spends purchased tokens) follows the *payments* pause; I added it as a gift-like spend — say if you'd rather exempt it.
 7. Course `enrollment_count` bump is still a separate statement after the enrollment insert (a crash between them loses one count; it can never double count).
 8. Git prints CRLF warnings on commit (repo autocrlf); no content impact.
+
+---
+
+# ROUND 3 — clearing ChatGPT's BLOCK on PR #5 (2026-11-07)
+
+Review: `G:\work\833-chatgpt-review.md`. Same limits as above: **nothing pushed, nothing deployed, no live Stripe / RevenueCat / Supabase, no env values read.** No charge, refund, payout or transfer was created. Payments stay paused.
+Commits are authored `ncblackbiz-lang <ncblackbiz@gmail.com>`; range `72fe741..HEAD`.
+
+## What changed, per review finding number
+
+| # | status | commit | change |
+|---|---|---|---|
+| 1 | FIXED | `501f2d1` | Migration §6: `REVOKE ALL … FROM PUBLIC, anon, authenticated; GRANT EXECUTE … TO service_role; ALTER FUNCTION … SET search_path = public, pg_temp` for `record_token_movement(uuid,text,int,uuid,uuid,uuid,text,jsonb)`, `admin_review_monetization_request(uuid,text,uuid,text)`, `check_monetization_auto_unlock(uuid)`, `ensure_token_wallet(uuid)`, `ensure_creator_wallet(uuid)`, `update_creator_streak(uuid,text)`, plus `wallet_add(uuid,int,int)` (re-asserted) and `bump_course_enrollment(uuid)` (was granted to `authenticated`: any user could inflate a course counter). Done in a `to_regprocedure` loop, so a signature missing in some environment is skipped, not fatal. Every app caller of these uses `createServiceClient()` (grepped: enroll, admin/monetization, challenges enter/vote, creator/streak, goals/contribute, live/gift, tokens/wallet, creator/wallet page, tokens page, stripe webhook). Other `SECURITY DEFINER` functions in old migrations are trigger functions (not callable via `/rpc`), read-only (`is_pro_member`) or already revoked (`find_user_id_by_email`, `purge_expired_munchor_link_requests`). |
+| 2 | FIXED | `0821c96` (SQL) + `f78ec5e` (route) | `reverse_tokens_for_payment` + `token_reversals`: one row per payment intent, key `stripe:pi:<pi>:token-reversal`. Refund and dispute each keep a *cumulative* token target (refund: `floor(tokenAmount × amount_refunded / amount)`, full when `charge.refunded`; dispute: `dispute.amount / amount`); total reversed = `min(purchased, refund + dispute)`, so refund+dispute on one charge, two partial refunds, and any replay reverse at most what was bought. |
+| 3 | FIXED | `f8d4cca` | `checkout.session.completed` fulfils only when `payment_status` is `paid` (or `no_payment_required`, a zero-amount session where nothing is owed); `checkout.session.async_payment_succeeded` runs the same idempotent path; `async_payment_failed` restores credits once. `payment_method_types: ['card']` added to all 16 `checkout.sessions.create` calls (routes + `lib/stripe.ts`). |
+| 4 | FIXED | `a59fcde` | Column default of `stripe_events.status` / `iap_events.status` stays `'completed'`; `claim_*` sets `'processing'` explicitly. |
+| 5 | FIXED | `2badccf` | `checkoutRef` in session metadata; route and webhook both restore under `credit-checkout:<ref>:restore` (sessions created before this fall back to `stripe:session:<id>:credit-restore`); `sessions.create(..., { idempotencyKey: checkoutRef })`. |
+| 6 | FIXED (minimum asked) | `0821c96` + `2badccf` | `money_exceptions` table (RLS on, no policy); a failed credit restore upserts a `credit_restore_failed` row. **Still open:** a crash between the debit and session creation leaves no pending row (no sweeper). Follow-up below. |
+| 7 | FIXED | `38e694a` | Payout route returns 409 when `invoicesCounted = 0` and does not flag the month; `run_pro_payout` also returns `no_invoices` without flagging. |
+| 8 | FIXED | `38e694a` | `run_pro_payout` raises `BAD_SPLIT` unless `SUM(cents) <= pool_cents <= gross` and every `cents >= 0`. |
+| 9 | FIXED (one part unverified live) | `4ec50eb` | `lib/stripe-shapes.ts`: `invoice.subscription` or `parent.subscription_details.subscription`; `subscription_details.metadata` or `parent…metadata`; `invoice.tax` or sum of `total_taxes[].amount`; `charge.invoice` or `invoicePayments.list({payment:{type:'payment_intent',…}})`. Tested with both shapes. The `invoicePayments` call is not in the pinned SDK types, so it is reached through a guarded cast; it has **not** been exercised against real Stripe. |
+| 10 | FIXED | `0821c96` + `f78ec5e` | A clawback the buyer cannot cover claws back the available balance and writes/updates a `token_clawback_shortfall` row (deduped, auto-resolved if later recovered); the event completes. `charge.dispute.created` sets `pro_revenue_ledger.disputed_cents` (new column); payout gross = `amount − refunded − disputed` (SQL and route). |
+| 11 | DEFERRED | – | See follow-ups. |
+| 12 | FIXED | `505b6a2` | `challenges/[id]/vote` returns the 503 for token-spending votes while `PAYMENTS_PAUSED`; free votes still work. |
+| 13 | FIXED | `0821c96` + `0f80fa0` | Migration §9: `CREATE UNIQUE INDEX uq_course_enrollments_course_user` only if the table exists and no unique index on exactly (course_id, user_id) exists; failure (duplicates) is a WARNING, not an abort. Webhook counter uses `bump_course_enrollment`. |
+| 14 | FIXED | `4ec50eb` | `else if (sub.metadata?.kind !== 'pro_subscription')` on both the updated and deleted branches. |
+| 15 | FIXED | `7886250` | Both CHECK swaps are `ADD CONSTRAINT … NOT VALID` then `VALIDATE` inside a `DO` block that logs a WARNING instead of aborting. Header lists the two pre-check selects. |
+| 16 | FIXED | `0821c96` | `send_live_gift` requires `status = 'active'`. |
+| 17–19 | DEFERRED | – | See follow-ups. |
+| 20 | FIXED | `501f2d1` | `SET search_path = public, pg_temp` on every definer function in the migration. |
+| 21 | FIXED | `2badccf` | Credits checkout looks up an existing purchase before debiting (returns `already_owned`). |
+| 22 | DONE (earlier + now) | – | SQL executed in PGlite (see below). |
+| – | | `48e1bcc` | Repairs a few non-UTF-8 em dashes my own earlier edits introduced (no behaviour change). |
+
+Corrections to the caveats above: caveat 3 says challenge votes were unchanged (now paused, #12); caveat 4 (async methods fulfilled on `completed`) is **fixed** (#3); caveat 7 (course counter) is now the atomic RPC.
+
+## Verification
+
+- `npx vitest run` → 12 files, **112 tests passed** (76 before this round + 36 new in `p0-833-round3-*`, plus updates to `payout` test 7 and the pause webhook fixture, which now carries `payment_status`).
+- `npx tsc --noEmit` → clean.
+- SQL on real Postgres (PGlite, `G:\work\sqltest`): old suite `node test.mjs` **23/23**, new suite `node test3.mjs` **35/35** (migration applied on top of all older ones twice, plus re-runs with legacy-bad data). Details in `G:\work\sqltest\RESULT.md`.
+
+## Production pre-checks (read-only, run BEFORE applying 20261107)
+
+```sql
+-- 1. the privilege hole: expect TRUE today, FALSE after the migration (anon too)
+select has_function_privilege('authenticated','public.record_token_movement(uuid,text,int,uuid,uuid,uuid,text,jsonb)','execute');
+select has_function_privilege('anon','public.record_token_movement(uuid,text,int,uuid,uuid,uuid,text,jsonb)','execute');
+select p.oid::regprocedure, has_function_privilege('authenticated', p.oid, 'execute') as auth_can
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.prosecdef order by 1;           -- every definer function that authenticated can call
+-- 2. data the CHECK swaps will meet (anything outside the migration's lists leaves that CHECK NOT VALID + a WARNING)
+select distinct type       from public.token_ledger;
+select distinct entry_type from public.credit_ledger;
+-- 3. duplicates that would block the course_enrollments unique index
+select course_id, user_id, count(*) from public.course_enrollments group by 1,2 having count(*) > 1;
+-- 4. after applying: the migration's own result
+select conname, convalidated from pg_constraint where conname in ('token_ledger_type_check','credit_ledger_entry_type_check');
+```
+
+**Stripe Dashboard (read-only to check, then a change that needs Kennedy/Marlowe sign-off):**
+- Webhook endpoint → **API version** (the payload shape follows this, not the SDK's `2024-06-20`). Round 3 handles both, but note which one it is.
+- Enable events on the endpoint: `checkout.session.expired`, `checkout.session.async_payment_failed`, **`checkout.session.async_payment_succeeded`** (new), `invoice.paid`, `charge.refunded`, `charge.dispute.created`, `customer.subscription.*`, `invoice.payment_failed`.
+- Payment methods: the code now forces cards on every session it creates; leave any delayed methods off in the Dashboard until the async path has been watched once.
+
+## Before the payout window
+
+- `CREATOR_PAYOUTS_PAUSED=1` stays on until `pro_revenue_ledger` is backfilled.
+- **Backfill November before Dec 1** (and any past month that should pay): one row per paid Pro invoice (invoice id, amount excl. tax, paid_at, `YYYY-MM`). The ledger starts empty at deploy; the Dec 1 run for November would otherwise see only invoices paid after the deploy. The route now refuses (409) when the month has no rows, but it cannot detect a *partially* filled month, so verify the November total against Stripe before unpausing.
+
+## Follow-ups (not built, tracked under #833)
+
+- **#11** Non-atomic creator/wallet cashout and credits paths: `app/api/creator/wallet/route.ts` (read `redeemable_cents`, write back — a `wallet_add` between the two is overwritten; concurrent requests both pass the `payout_status` check; write errors ignored), `flavor/cashout`, and `deductCredits` / `grantCredits` / `autoRepayLoanFromCashout` in `lib/credits.ts` (optimistic lock + separate ledger insert). Needs RPCs with row locks like `send_live_gift`.
+- **#17** `wallet_add` books Pro-pool payouts under `monthly_earnings.gifts` with 0 tokens (reporting label only).
+- **#18** RevenueCat: app-store refunds (`CANCELLATION` / `CUSTOMER_SUPPORT`) never claw tokens back; auth-header compare is not constant-time (`revenuecat-webhook/route.ts:37`); a valid UUID with no profile gets an FK error and is retried forever.
+- **#19** `components/PauseStatus.tsx` caches the pause status for the page lifetime (UI only; server enforces).
+- **#6 (rest)** Pending-checkout row or debit+pending-row RPC with a sweeper, so a crash between the credit debit and `sessions.create` is recoverable.
+- `charge.dispute.closed` (merchant *won*): the dispute no longer reduces the Pro ledger / re-grants nothing; handle it to undo `disputed_cents` (and decide about tokens).
+- `update_creator_streak` (pre-existing): `column reference "current_streak" is ambiguous` when run on Postgres (RETURNS TABLE column clashes with a table column). Found while testing privileges; not touched (not money-moving by itself, but the streak route that grants bonus tokens depends on it). Needs `#variable_conflict use_column` or qualified columns.
+- Prod has dashboard-made objects that no migration creates (`course_enrollments`, `course_lessons`, …): a fresh DB cannot be built from `supabase/migrations` alone.
