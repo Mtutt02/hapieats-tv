@@ -468,6 +468,8 @@ AS $$
 DECLARE
   v_distributed BOOLEAN;
   v_gross       BIGINT;
+  v_invoices    INT;
+  v_split       BIGINT;
   v_paid        BIGINT := 0;
   v_n           INT := 0;
   e             RECORD;
@@ -481,10 +483,33 @@ BEGIN
     RETURN jsonb_build_object('status', 'already_distributed');
   END IF;
 
-  SELECT COALESCE(SUM(GREATEST(amount_cents - refunded_cents, 0)), 0) INTO v_gross
+  SELECT COUNT(*), COALESCE(SUM(GREATEST(amount_cents - refunded_cents, 0)), 0)
+    INTO v_invoices, v_gross
     FROM public.pro_revenue_ledger WHERE month = p_month;
+
+  -- An empty ledger means "nothing recorded", not "nothing earned" (the ledger
+  -- starts empty at deploy). Never lock a month on that: leave it undistributed
+  -- so a backfill + re-run can still pay it.
+  IF v_invoices = 0 THEN
+    RETURN jsonb_build_object('status', 'no_invoices');
+  END IF;
+
   IF v_gross <> p_expected_gross THEN
     RAISE EXCEPTION 'GROSS_CHANGED: ledger % vs expected %', v_gross, p_expected_gross;
+  END IF;
+
+  -- Defense in depth: never trust the caller's split. SUM(cents) <= pool <= gross.
+  SELECT COALESCE(SUM(x.cents), 0) INTO v_split
+    FROM jsonb_to_recordset(COALESCE(p_earnings, '[]'::jsonb))
+      AS x(creator_id UUID, credits NUMERIC, cents BIGINT);
+  IF EXISTS (
+    SELECT 1 FROM jsonb_to_recordset(COALESCE(p_earnings, '[]'::jsonb))
+      AS x(creator_id UUID, credits NUMERIC, cents BIGINT) WHERE x.cents IS NULL OR x.cents < 0
+  ) THEN
+    RAISE EXCEPTION 'BAD_SPLIT: negative or missing cents';
+  END IF;
+  IF p_pool_cents < 0 OR p_pool_cents > v_gross OR v_split > p_pool_cents THEN
+    RAISE EXCEPTION 'BAD_SPLIT: split % pool % gross %', v_split, p_pool_cents, v_gross;
   END IF;
 
   FOR e IN

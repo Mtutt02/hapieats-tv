@@ -24,7 +24,9 @@
  * and the pool's distributed flag are written by ONE SQL function
  * (run_pro_payout), in one transaction, under a row lock on the pool. A failure
  * commits nothing; a re-run, or a concurrent run, of a distributed month is a
- * no-op. Months that are not finished yet are refused.
+ * no-op. Months that are not finished yet are refused, and so is a month with no
+ * recorded invoices at all (409, not flagged distributed). run_pro_payout also
+ * refuses a split where SUM(cents) > pool_cents or pool_cents > gross.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -99,6 +101,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Revenue query failed' }, { status: 500 })
   }
   const invoicesCounted = (revenue ?? []).length
+  // An empty ledger means "nothing recorded", not "nothing earned": the ledger
+  // starts empty at deploy, so a month paid before then would be locked at $0.
+  // Refuse, and do NOT flag the month distributed; backfill, then re-run.
+  if (invoicesCounted === 0) {
+    return NextResponse.json(
+      { error: 'No recorded Pro invoices for that month — backfill pro_revenue_ledger before paying it out', month, invoicesCounted: 0 },
+      { status: 409 },
+    )
+  }
   const grossCents = (revenue ?? []).reduce(
     (sum, r) => sum + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0),
     0,
@@ -149,8 +160,15 @@ export async function POST(req: NextRequest) {
     if (payErr.message?.includes('GROSS_CHANGED')) {
       return NextResponse.json({ error: 'Revenue changed while the payout was being prepared â€” run it again', month }, { status: 409 })
     }
+    if (payErr.message?.includes('BAD_SPLIT')) {
+      console.error('[academy/payout] run_pro_payout refused the split:', payErr.message)
+      return NextResponse.json({ error: 'Payout split failed validation — nothing was paid', month }, { status: 500 })
+    }
     console.error('[academy/payout] run_pro_payout failed (nothing was committed):', payErr)
     return NextResponse.json({ error: 'Payout failed â€” nothing was paid; safe to run again' }, { status: 500 })
+  }
+  if (result?.status === 'no_invoices') {
+    return NextResponse.json({ error: 'No recorded Pro invoices for that month', month, invoicesCounted: 0 }, { status: 409 })
   }
   if (result?.status === 'already_distributed') {
     return NextResponse.json({ skipped: true, reason: 'already distributed', month })

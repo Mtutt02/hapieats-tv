@@ -117,13 +117,45 @@ describe('pro payout', () => {
     expect(db.creatorCents(X)).toBe(0)
   })
 
-  it('(7) a month with no recorded revenue pays nothing, rather than paying from an estimate', async () => {
+  it('(7) a month with no recorded invoices is refused (409) and NOT locked, so a backfill can still be paid', async () => {
     db.rows('pro_revenue_ledger').length = 0
 
     const res = await run()
 
-    expect(await res.json()).toMatchObject({ grossCents: 0, poolCents: 0, creatorsPaid: 0 })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ invoicesCounted: 0 })
     expect(db.creatorCents(X)).toBe(0)
+    expect(db.rows('pro_payout_pool').some(p => p.distributed)).toBe(false)
+
+    // backfill arrives -> the same month now pays
+    db.rows('pro_revenue_ledger').push({ stripe_invoice_id: 'in_backfill', amount_cents: 1000, refunded_cents: 0, month: '2026-10' })
+    expect((await run()).status).toBe(200)
+    expect(db.creatorCents(X)).toBe(Math.floor((500 * 80) / 100))
+  })
+
+  it('(7b) the SQL function itself also refuses an empty ledger (route bypassed) without flagging the month', async () => {
+    db.rows('pro_revenue_ledger').length = 0
+
+    const { data } = await db.rpc('run_pro_payout', { p_month: '2026-10', p_expected_gross: 0, p_pool_cents: 0, p_total_credits: 0, p_earnings: [] })
+
+    expect(data).toMatchObject({ status: 'no_invoices' })
+    expect(db.rows('pro_payout_pool').some(p => p.distributed)).toBe(false)
+  })
+
+  it('(7c) run_pro_payout rejects a split larger than the pool, or a pool larger than gross, and pays nothing', async () => {
+    const over = await db.rpc('run_pro_payout', {
+      p_month: '2026-10', p_expected_gross: 2098, p_pool_cents: 1049, p_total_credits: 100,
+      p_earnings: [{ creator_id: X, credits: 80, cents: 1000 }, { creator_id: Y, credits: 20, cents: 500 }],
+    })
+    expect(over.error?.message).toContain('BAD_SPLIT')
+
+    const pool = await db.rpc('run_pro_payout', {
+      p_month: '2026-10', p_expected_gross: 2098, p_pool_cents: 5000, p_total_credits: 100, p_earnings: [],
+    })
+    expect(pool.error?.message).toContain('BAD_SPLIT')
+
+    expect(db.creatorCents(X)).toBe(0)
+    expect(db.rows('pro_payout_pool').some(p => p.distributed)).toBe(false)
   })
 })
 

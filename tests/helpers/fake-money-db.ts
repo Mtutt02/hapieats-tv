@@ -207,10 +207,14 @@ export class MoneyDb {
       let pool = this.rows('pro_payout_pool').find(r => r.month === a.p_month)
       if (!pool) this.rows('pro_payout_pool').push((pool = { month: a.p_month, distributed: false }))
       if (pool.distributed) return { status: 'already_distributed' }
-      const gross = this.rows('pro_revenue_ledger')
-        .filter(r => r.month === a.p_month)
-        .reduce((s, r) => s + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0), 0)
+      const ledger = this.rows('pro_revenue_ledger').filter(r => r.month === a.p_month)
+      if (ledger.length === 0) return { status: 'no_invoices' }
+      const gross = ledger.reduce((s, r) => s + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0), 0)
       if (gross !== Number(a.p_expected_gross)) this.raise('GROSS_CHANGED')
+      const split = (a.p_earnings as Row[]).reduce((s, e) => s + Number(e.cents), 0)
+      if ((a.p_earnings as Row[]).some(e => !(Number(e.cents) >= 0)) || a.p_pool_cents < 0 || a.p_pool_cents > gross || split > a.p_pool_cents) {
+        this.raise(`BAD_SPLIT: split ${split} pool ${a.p_pool_cents} gross ${gross}`)
+      }
       let paid = 0, n = 0
       for (const e of a.p_earnings as Row[]) {
         const prior = this.rows('pro_pool_earnings').find(r => r.creator_id === e.creator_id && r.month === a.p_month)
