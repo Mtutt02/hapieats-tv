@@ -4,6 +4,12 @@ import { stripe } from '@/lib/stripe'
 import { createServiceClient } from '@/lib/supabase/server'
 import Stripe from 'stripe'
 import { handleProCheckoutCompleted, handleProSubscriptionEvent } from '@/lib/academy/pro'
+import {
+  chargeInvoiceId,
+  invoiceSubscriptionId,
+  invoiceSubscriptionMetadata,
+  invoiceTaxCents,
+} from '@/lib/stripe-shapes'
 
 export const runtime = 'nodejs'
 
@@ -309,8 +315,9 @@ export async function POST(req: NextRequest) {
             current_period_end: new Date((sub as any).current_period_end * 1000).toISOString(),
           }, { onConflict: 'stripe_subscription_id' })
           must(error, 'channel subscription')
-        } else {
-          // Platform subscription — update profile
+        } else if (sub.metadata?.kind !== 'pro_subscription') {
+          // Platform subscription — update profile. A Pro subscription has no channelId
+          // but is NOT the platform subscription: it is handled by handleProSubscriptionEvent.
           const customer = await stripe.customers.retrieve(sub.customer as string)
           if (!('deleted' in customer)) {
             const { error } = await supabase.from('profiles').update({
@@ -337,7 +344,7 @@ export async function POST(req: NextRequest) {
             .update({ status: 'canceled' })
             .eq('stripe_subscription_id', sub.id)
           must(error, 'channel subscription cancel')
-        } else {
+        } else if (sub.metadata?.kind !== 'pro_subscription') {
           const { error } = await supabase.from('profiles').update({
             platform_subscription_status: 'canceled',
           }).eq('stripe_customer_id', sub.customer as string)
@@ -351,8 +358,10 @@ export async function POST(req: NextRequest) {
       // by invoice id, so a replay (or two event ids for one invoice) records once.
       case 'invoice.paid': {
         const invoice = event.data.object as Stripe.Invoice
-        const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id ?? null
-        let isPro = (invoice as any).subscription_details?.metadata?.kind === 'pro_subscription'
+        // Field locations differ by the endpoint's API version: lib/stripe-shapes reads both.
+        const subId = invoiceSubscriptionId(invoice)
+        const subMeta = invoiceSubscriptionMetadata(invoice)
+        let isPro = subMeta.kind === 'pro_subscription'
         if (!isPro && subId) {
           const { data: proRow, error } = await supabase
             .from('pro_subscriptions')
@@ -362,14 +371,14 @@ export async function POST(req: NextRequest) {
           must(error, 'pro subscription lookup')
           isPro = !!proRow
         }
-        const collected = (invoice.amount_paid ?? 0) - ((invoice as any).tax ?? 0)
+        const collected = (invoice.amount_paid ?? 0) - invoiceTaxCents(invoice)
         if (isPro && invoice.id && collected > 0) {
           const paidAtSec = invoice.status_transitions?.paid_at ?? invoice.created
           const paidAt = new Date(paidAtSec * 1000)
           const { error } = await supabase.from('pro_revenue_ledger').upsert(
             {
               stripe_invoice_id: invoice.id,
-              user_id: (invoice as any).subscription_details?.metadata?.user_id ?? null,
+              user_id: subMeta.user_id ?? null,
               stripe_subscription_id: subId,
               amount_cents: collected,
               currency: invoice.currency ?? 'usd',
@@ -386,10 +395,11 @@ export async function POST(req: NextRequest) {
       // ── Invoice payment failed ────────────────────────────────────────────────
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
-        if (invoice.subscription) {
+        const failedSubId = invoiceSubscriptionId(invoice)
+        if (failedSubId) {
           const { error } = await supabase.from('subscriptions')
             .update({ status: 'past_due' })
-            .eq('stripe_subscription_id', invoice.subscription as string)
+            .eq('stripe_subscription_id', failedSubId)
           must(error, 'invoice payment failed')
         }
         break
@@ -417,7 +427,7 @@ export async function POST(req: NextRequest) {
           ?? (dispute?.charge
             ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
             : null)
-        const chargeInvoice = ledgerCharge ? ((ledgerCharge as any).invoice as string | null) : null
+        const chargeInvoice = ledgerCharge ? await chargeInvoiceId(stripe, ledgerCharge) : null
         if (chargeInvoice) {
           const patch = isDispute
             ? { disputed_cents: Number(dispute?.amount ?? 0) }
