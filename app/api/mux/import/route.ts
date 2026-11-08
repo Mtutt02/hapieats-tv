@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { playbackIdBelongsToUser } from '@/lib/mux-upload-guard'
 
 /**
  * POST /api/mux/import
@@ -52,6 +53,12 @@ export async function POST(req: NextRequest) {
       if (!channel) {
         return NextResponse.json({ error: 'Channel not found or not owned by you' }, { status: 403 })
       }
+    }
+
+    // Any public playback ID is guessable/shareable, so only accept one whose Mux asset was
+    // created by this user's own direct upload (passthrough binding). Fails closed.
+    if (!(await playbackIdBelongsToUser(playbackId, user.id))) {
+      return NextResponse.json({ error: 'Playback ID not found' }, { status: 404 })
     }
 
     // A playback ID that is already on the platform belongs to whoever uploaded it.

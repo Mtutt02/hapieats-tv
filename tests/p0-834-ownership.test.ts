@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   createServiceClient: vi.fn(),
   uploadsRetrieve: vi.fn(),
   uploadsCreate: vi.fn(),
+  playbackIdsRetrieve: vi.fn(),
+  assetsRetrieve: vi.fn(),
   checkRateLimit: vi.fn(),
 }))
 
@@ -18,7 +20,11 @@ vi.mock('@/lib/supabase/server', () => ({
   createServiceClient: mocks.createServiceClient,
 }))
 vi.mock('@/lib/mux', () => ({
-  video: { uploads: { retrieve: mocks.uploadsRetrieve, create: mocks.uploadsCreate } },
+  video: {
+    uploads: { retrieve: mocks.uploadsRetrieve, create: mocks.uploadsCreate },
+    playbackIds: { retrieve: mocks.playbackIdsRetrieve },
+    assets: { retrieve: mocks.assetsRetrieve },
+  },
 }))
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: mocks.checkRateLimit }))
 
@@ -46,11 +52,12 @@ describe('POST /api/editor/projects — ownership', () => {
     // Bob owns proj-1. Alice's UPDATE (scoped to her user_id) matches 0 rows; her INSERT hits the PK.
     const update = queryChain({ data: [] })
     const insert = queryChain({ error: { code: '23505', message: 'duplicate key' } })
-    mocks.createClient.mockReturnValue(fakeSession(ALICE))
-    mocks.createServiceClient.mockReturnValue(fakeService({ editor_projects: [update, insert] }))
+    // editor_projects is written through the caller's session client (RLS applies), never the service role.
+    mocks.createClient.mockReturnValue(fakeSession(ALICE, [update, insert]))
 
     const res = await saveProject(post('/api/editor/projects', { project }))
 
+    expect(mocks.createServiceClient).not.toHaveBeenCalled()
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: 'Project not found' })
     // The update is scoped to the caller: both id and user_id filters are applied.
@@ -62,11 +69,11 @@ describe('POST /api/editor/projects — ownership', () => {
 
   it('owner updates their own project (200, no insert attempted)', async () => {
     const update = queryChain({ data: [{ id: 'proj-1' }] })
-    mocks.createClient.mockReturnValue(fakeSession(ALICE))
-    mocks.createServiceClient.mockReturnValue(fakeService({ editor_projects: [update] }))
+    mocks.createClient.mockReturnValue(fakeSession(ALICE, [update]))
 
     const res = await saveProject(post('/api/editor/projects', { project }))
 
+    expect(mocks.createServiceClient).not.toHaveBeenCalled()
     expect(res.status).toBe(200)
     expect(update.eq).toHaveBeenCalledWith('user_id', ALICE)
   })
@@ -74,8 +81,7 @@ describe('POST /api/editor/projects — ownership', () => {
   it('a brand-new project id is inserted for the caller (200)', async () => {
     const update = queryChain({ data: [] })
     const insert = queryChain({})
-    mocks.createClient.mockReturnValue(fakeSession(BOB))
-    mocks.createServiceClient.mockReturnValue(fakeService({ editor_projects: [update, insert] }))
+    mocks.createClient.mockReturnValue(fakeSession(BOB, [update, insert]))
 
     const res = await saveProject(post('/api/editor/projects', { project }))
 
@@ -173,8 +179,47 @@ describe('POST /api/mux/editor-save — upload binding, dedupe, quota', () => {
   })
 })
 
-describe('POST /api/mux/import — duplicate playbackId', () => {
+describe('POST /api/mux/import — playbackId ownership and duplicates', () => {
   const body = { playbackId: 'playback-1', title: 'Re-import' }
+
+  beforeEach(() => {
+    // By default the playback ID resolves to an asset that ALICE uploaded through direct-upload.
+    mocks.playbackIdsRetrieve.mockResolvedValue({ id: 'playback-1', object: { id: 'asset-1', type: 'asset' } })
+    mocks.assetsRetrieve.mockResolvedValue({ id: 'asset-1', passthrough: `hapi-uploader:${ALICE}` })
+  })
+
+  it('(5b) a playbackId whose asset belongs to another account returns 404 and touches no table', async () => {
+    mocks.assetsRetrieve.mockResolvedValue({ id: 'asset-1', passthrough: `hapi-uploader:${BOB}` })
+    mocks.createClient.mockReturnValue(fakeSession(ALICE))
+    const service = fakeService({})
+    mocks.createServiceClient.mockReturnValue(service)
+
+    const res = await muxImport(post('/api/mux/import', body))
+
+    expect(res.status).toBe(404)
+    expect(service.from).not.toHaveBeenCalled()
+  })
+
+  it('(5c) a playbackId with no passthrough (not created by this app) returns 404', async () => {
+    mocks.assetsRetrieve.mockResolvedValue({ id: 'asset-1' })
+    mocks.createClient.mockReturnValue(fakeSession(ALICE))
+    mocks.createServiceClient.mockReturnValue(fakeService({}))
+
+    const res = await muxImport(post('/api/mux/import', body))
+
+    expect(res.status).toBe(404)
+  })
+
+  it('(5d) a live-stream playback ID, or a Mux lookup failure, returns 404', async () => {
+    mocks.createClient.mockReturnValue(fakeSession(ALICE))
+    mocks.createServiceClient.mockReturnValue(fakeService({}))
+
+    mocks.playbackIdsRetrieve.mockResolvedValue({ id: 'playback-1', object: { id: 'ls-1', type: 'live_stream' } })
+    expect((await muxImport(post('/api/mux/import', body))).status).toBe(404)
+
+    mocks.playbackIdsRetrieve.mockRejectedValue(new Error('mux down'))
+    expect((await muxImport(post('/api/mux/import', body))).status).toBe(404)
+  })
 
   it('(5) a playbackId already on a video returns 409 and inserts nothing', async () => {
     mocks.createClient.mockReturnValue(fakeSession(ALICE))
@@ -207,14 +252,18 @@ describe('GET /api/mux/direct-upload — binding and rate limit', () => {
     vi.stubEnv('MUX_TOKEN_ID', 'test-token-id-1234567890')
   })
 
-  it('binds the new upload to the caller via passthrough', async () => {
+  it('binds the new upload to the caller via passthrough and records it in the ledger', async () => {
     mocks.createClient.mockReturnValue(fakeSession(ALICE))
     mocks.checkRateLimit.mockReturnValue({ allowed: true })
     mocks.uploadsCreate.mockResolvedValue({ url: 'https://mux.example/upload', id: 'upload-1' })
+    const count = queryChain({ count: 0 })
+    const record = queryChain({})
+    mocks.createServiceClient.mockReturnValue(fakeService({ mux_upload_requests: [count, record] }))
 
     const res = await directUpload(new NextRequest('http://localhost/api/mux/direct-upload'))
 
     expect(res.status).toBe(200)
+    expect(record.insert).toHaveBeenCalledWith({ upload_id: 'upload-1', user_id: ALICE })
     expect(mocks.uploadsCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         new_asset_settings: expect.objectContaining({ passthrough: `hapi-uploader:${ALICE}` }),
@@ -231,6 +280,33 @@ describe('GET /api/mux/direct-upload — binding and rate limit', () => {
     expect(res.status).toBe(429)
     expect(mocks.checkRateLimit).toHaveBeenCalledWith(`${ALICE}:mux-direct-upload`, 20, 60 * 60_000)
     expect(mocks.uploadsCreate).not.toHaveBeenCalled()
+  })
+
+  it('(6) at the database-backed hourly quota (any instance) returns 429 and creates no Mux upload', async () => {
+    mocks.createClient.mockReturnValue(fakeSession(ALICE))
+    mocks.checkRateLimit.mockReturnValue({ allowed: true }) // this instance has not seen the traffic
+    const count = queryChain({ count: 20 })
+    mocks.createServiceClient.mockReturnValue(fakeService({ mux_upload_requests: [count] }))
+
+    const res = await directUpload(new NextRequest('http://localhost/api/mux/direct-upload'))
+
+    expect(res.status).toBe(429)
+    expect(count.eq).toHaveBeenCalledWith('user_id', ALICE)
+    expect(mocks.uploadsCreate).not.toHaveBeenCalled()
+  })
+
+  it('(6b) with the ledger table missing (migration not applied) uploads still work', async () => {
+    mocks.createClient.mockReturnValue(fakeSession(ALICE))
+    mocks.checkRateLimit.mockReturnValue({ allowed: true })
+    mocks.uploadsCreate.mockResolvedValue({ url: 'https://mux.example/upload', id: 'upload-2' })
+    const missing = { error: { code: '42P01', message: 'relation does not exist' } }
+    mocks.createServiceClient.mockReturnValue(
+      fakeService({ mux_upload_requests: [queryChain(missing), queryChain(missing)] }),
+    )
+
+    const res = await directUpload(new NextRequest('http://localhost/api/mux/direct-upload'))
+
+    expect(res.status).toBe(200)
   })
 
   it('anonymous caller gets 401', async () => {
