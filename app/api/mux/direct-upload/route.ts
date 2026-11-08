@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { video as muxVideo } from '@/lib/mux'
+import { checkRateLimit } from '@/lib/rate-limit'
+import {
+  HOURLY_UPLOAD_REQUEST_LIMIT,
+  UPLOAD_PASSTHROUGH_PREFIX,
+  recentUploadRequestCount,
+  recordUploadRequest,
+} from '@/lib/mux-upload-guard'
 
 export const dynamic = 'force-dynamic'
+
+// Issuing an upload URL is cheap, but each finished upload becomes a paid Mux asset.
+// Cap how many URLs one account can request per hour: in memory per instance (first line),
+// and in the database across instances once the mux_upload_requests ledger exists.
+const DIRECT_UPLOAD_LIMIT_PER_HOUR = HOURLY_UPLOAD_REQUEST_LIMIT
 
 /**
  * GET /api/mux/direct-upload
@@ -17,18 +29,32 @@ export async function GET(_req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const limit = checkRateLimit(`${user.id}:mux-direct-upload`, DIRECT_UPLOAD_LIMIT_PER_HOUR, 60 * 60_000)
+    if (!limit.allowed) {
+      return NextResponse.json({ error: 'Too many uploads. Try again later.' }, { status: 429 })
+    }
+
+    const service = createServiceClient()
+    if ((await recentUploadRequestCount(service, user.id)) >= DIRECT_UPLOAD_LIMIT_PER_HOUR) {
+      return NextResponse.json({ error: 'Too many uploads. Try again later.' }, { status: 429 })
+    }
+
     const muxId = process.env.MUX_TOKEN_ID ?? ''
     if (!muxId || muxId.startsWith('your-') || muxId.length < 10) {
       return NextResponse.json({ error: 'Mux credentials not configured' }, { status: 503 })
     }
 
+    // passthrough binds the upload to this user; editor-save checks it before saving.
     const upload = await muxVideo.uploads.create({
       cors_origin: process.env.NEXT_PUBLIC_APP_URL ?? '*',
       new_asset_settings: {
         playback_policy: ['public'],
         encoding_tier: 'baseline',
+        passthrough: `${UPLOAD_PASSTHROUGH_PREFIX}${user.id}`,
       },
     })
+
+    await recordUploadRequest(service, upload.id, user.id)
 
     return NextResponse.json({
       uploadUrl: upload.url,
