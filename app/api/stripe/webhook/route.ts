@@ -265,7 +265,8 @@ export async function POST(req: NextRequest) {
       // /api/credits/checkout debits credits BEFORE creating the Stripe session. If
       // the session expires (we create them with a 30 minute expiry) or an async
       // payment fails, the cash part will never arrive, so the credits go back.
-      // Keyed by session id: expired + async_payment_failed + any replay restore once.
+      // Keyed by checkoutRef (or the session id for older sessions): expired +
+      // async_payment_failed + a route-side restore + any replay restore once.
       case 'checkout.session.expired':
       case 'checkout.session.async_payment_failed': {
         const session = event.data.object as Stripe.Checkout.Session
@@ -274,8 +275,13 @@ export async function POST(req: NextRequest) {
           const gift = Number(session.metadata?.giftUsed ?? 0) || 0
           const loan = Number(session.metadata?.loanUsed ?? 0) || 0
           if (gift > 0 || loan > 0) {
+            // Same key as /api/credits/checkout uses when it restores on a failed
+            // sessions.create, so a timed-out create that still produced a session
+            // (which later expires) can never restore twice. Sessions created before
+            // checkoutRef existed fall back to the per-session key.
+            const checkoutRef = session.metadata?.checkoutRef
             const { error } = await supabase.rpc('restore_credits_once', {
-              p_key: `stripe:session:${session.id}:credit-restore`,
+              p_key: checkoutRef ? `credit-checkout:${checkoutRef}:restore` : `stripe:session:${session.id}:credit-restore`,
               p_user_id: userId,
               p_gift: gift,
               p_loan: loan,

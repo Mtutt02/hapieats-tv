@@ -84,6 +84,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Video is not paid content' }, { status: 400 })
     }
 
+    // Already owned: never debit credits for something the buyer has (a double tap, or a
+    // purchase that completed in another tab). Checked BEFORE the debit.
+    const { data: owned, error: ownedErr } = await serviceClient
+      .from('purchases')
+      .select('video_id')
+      .eq('buyer_id', user.id)
+      .eq('video_id', videoId)
+      .maybeSingle()
+    if (ownedErr) {
+      console.error('[credits/checkout] ownership check failed:', ownedErr)
+      return NextResponse.json(CHECKOUT_FAILED, { status: 500 })
+    }
+    if (owned) {
+      return NextResponse.json({ success: true, mode: 'already_owned', creditsUsed: 0, message: 'You already own this video.' })
+    }
+
     const priceUsd = parseFloat(video.price)
     const creditBalance = await getCreditBalance(user.id)
     const application = calculateCreditApplication(priceUsd, creditBalance)
@@ -95,7 +111,7 @@ export async function POST(req: NextRequest) {
 
     // Deduct credits first (atomic — any DB error throws before Stripe)
     const checkoutRef = randomUUID()
-    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, `precheckout:${checkoutRef}`, why)
+    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, checkoutRef, why)
     await deductCredits({
       userId: user.id,
       giftUsed: application.giftUsed,
@@ -149,6 +165,8 @@ export async function POST(req: NextRequest) {
         await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
       }
 
+      // idempotencyKey: if this call times out AFTER Stripe created the session, a retry of
+      // the same checkoutRef returns that session instead of making a second one.
       session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
@@ -174,11 +192,12 @@ export async function POST(req: NextRequest) {
         userId: user.id,
         checkoutMode: 'credit_ppv',
         videoId,
+        checkoutRef, // the webhook restores under credit-checkout:<ref>:restore, same key as this route
         creditsUsed: application.totalCreditsUsed.toString(),
         giftUsed: application.giftUsed.toString(),
         loanUsed: application.loanUsed.toString(),
       },
-    })
+    }, { idempotencyKey: checkoutRef })
     } catch (err) {
       // No Stripe session exists, so no webhook will ever come: give the credits back now.
       console.error('[credits/checkout] ppv session creation failed, restoring credits:', err)
@@ -217,7 +236,7 @@ export async function POST(req: NextRequest) {
 
     // Deduct credits atomically
     const checkoutRef = randomUUID()
-    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, `precheckout:${checkoutRef}`, why)
+    const restore = (why: string) => restoreCredits(serviceClient, user.id, application, checkoutRef, why)
     await deductCredits({
       userId: user.id,
       giftUsed: application.giftUsed,
@@ -298,11 +317,12 @@ export async function POST(req: NextRequest) {
         checkoutMode: 'credit_flavor',
         packageId,
         pointsAmount: pkg.points.toString(),
+        checkoutRef,
         creditsUsed: application.totalCreditsUsed.toString(),
         giftUsed: application.giftUsed.toString(),
         loanUsed: application.loanUsed.toString(),
       },
-    })
+    }, { idempotencyKey: checkoutRef })
     } catch (err) {
       console.error('[credits/checkout] flavor session creation failed, restoring credits:', err)
       await restore('flavor checkout session failed')
@@ -319,21 +339,46 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Give debited credits back, once per key. Never throws: the caller is already on an error path. */
+/**
+ * Give debited credits back, once per checkoutRef. The key is shared with the webhook
+ * (checkout.session.expired / async_payment_failed), so whichever runs first restores and the
+ * other is a no-op. Never throws: the caller is already on an error path. If the restore itself
+ * fails, the problem is written to money_exceptions so someone reviews it (not just logged).
+ */
 async function restoreCredits(
   service: ReturnType<typeof createServiceClient>,
   userId: string,
   application: { giftUsed: number; loanUsed: number },
-  key: string,
+  checkoutRef: string,
   why: string,
 ) {
+  const key = `credit-checkout:${checkoutRef}:restore`
   const { error } = await service.rpc('restore_credits_once', {
     p_key: key,
     p_user_id: userId,
     p_gift: application.giftUsed,
     p_loan: application.loanUsed,
-    p_ref: key,
+    p_ref: checkoutRef,
     p_notes: `Credits returned: ${why}`,
   })
-  if (error) console.error('[credits/checkout] CREDIT RESTORE FAILED — manual fix needed:', key, error)
+  if (!error) return
+
+  console.error('[credits/checkout] CREDIT RESTORE FAILED — recording for manual review:', key, error)
+  try {
+    const { error: recordErr } = await service.from('money_exceptions').upsert(
+      {
+        dedupe_key: `credit-restore-failed:${checkoutRef}`,
+        kind: 'credit_restore_failed',
+        user_id: userId,
+        ref: checkoutRef,
+        amount: application.giftUsed + application.loanUsed,
+        detail: { why, restore_key: key, gift: application.giftUsed, loan: application.loanUsed, error: error.message ?? String(error) },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'dedupe_key' },
+    )
+    if (recordErr) console.error('[credits/checkout] could not record the failed restore either:', recordErr)
+  } catch (e) {
+    console.error('[credits/checkout] could not record the failed restore either:', e)
+  }
 }
