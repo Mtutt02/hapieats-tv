@@ -396,32 +396,42 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Refund / chargeback — claw back token credits ─────────────────────────
-      // Token purchases record the Stripe session in token_ledger metadata. We map
-      // charge → payment_intent → checkout session, read the metadata the checkout
-      // flow stored (checkoutMode, userId, tokenAmount) and reverse the credit.
-      // The reversal is keyed by event id, so a replay can't claw back twice, and any
-      // failure now fails the event (500) instead of being swallowed.
+      // Token purchases are keyed by PAYMENT, not by event: a refund plus a dispute
+      // on one charge, or two partial refunds, are several events for one purchase.
+      // reverse_tokens_for_payment keeps one row per payment intent with cumulative
+      // refund / dispute targets (proportional to amount_refunded / amount, capped at
+      // what was bought), so no sequence of events can ever reverse more than the
+      // buyer got, and a replay changes nothing. If the buyer already spent some of
+      // it, the available balance is clawed back and the shortfall lands in
+      // money_exceptions for manual review (written inside the same function).
       case 'charge.refunded':
       case 'charge.dispute.created': {
         const isDispute = event.type === 'charge.dispute.created'
         const reason = isDispute ? 'chargeback' : 'refund'
+        const charge = isDispute ? null : (event.data.object as Stripe.Charge)
+        const dispute = isDispute ? (event.data.object as Stripe.Dispute) : null
 
-        // A refunded Pro invoice shrinks that month's pool. Absolute value from Stripe, so replays are harmless.
-        if (!isDispute) {
-          const charge = event.data.object as Stripe.Charge
-          const chargeInvoice = (charge as any).invoice as string | null
-          if (chargeInvoice) {
-            const { error } = await supabase
-              .from('pro_revenue_ledger')
-              .update({ refunded_cents: charge.amount_refunded ?? 0 })
-              .eq('stripe_invoice_id', chargeInvoice)
-            must(error, 'pro revenue refund')
-          }
+        // A refunded / disputed Pro invoice shrinks that month's pool. Absolute
+        // amounts from Stripe, so replays are harmless.
+        const ledgerCharge: Stripe.Charge | null = charge
+          ?? (dispute?.charge
+            ? (typeof dispute.charge === 'string' ? await stripe.charges.retrieve(dispute.charge) : dispute.charge)
+            : null)
+        const chargeInvoice = ledgerCharge ? ((ledgerCharge as any).invoice as string | null) : null
+        if (chargeInvoice) {
+          const patch = isDispute
+            ? { disputed_cents: Number(dispute?.amount ?? 0) }
+            : { refunded_cents: charge?.amount_refunded ?? 0 }
+          const { error } = await supabase
+            .from('pro_revenue_ledger')
+            .update(patch)
+            .eq('stripe_invoice_id', chargeInvoice)
+          must(error, 'pro revenue refund/dispute')
         }
 
         const paymentIntentId = isDispute
-          ? ((event.data.object as Stripe.Dispute).payment_intent as string | null)
-          : ((event.data.object as Stripe.Charge).payment_intent as string | null)
+          ? ((dispute!.payment_intent as string | null) ?? null)
+          : (charge!.payment_intent as string | null)
 
         if (!paymentIntentId) {
           console.error(`[stripe/webhook] ${event.type}: no payment_intent on event ${event.id} — skipping`)
@@ -444,12 +454,23 @@ export async function POST(req: NextRequest) {
         if (checkoutMode === 'token_purchase' && userId) {
           const tokenAmount = parseInt(session.metadata?.tokenAmount ?? '0', 10)
           if (tokenAmount > 0) {
-            const { error: reverseErr } = await supabase.rpc('credit_tokens_once', {
-              p_key: `stripe:event:${event.id}:token-reversal`,
+            // Share of the purchase this event covers, as tokens (floor; a full refund is exact).
+            const paid = Number(charge?.amount ?? session.amount_total ?? 0)
+            const covered = isDispute ? Number(dispute?.amount ?? 0) : Number(charge?.amount_refunded ?? 0)
+            const fullyCovered = isDispute
+              ? !(paid > 0) || covered >= paid
+              : charge?.refunded === true || (paid > 0 && covered >= paid)
+            const sourceTokens = fullyCovered
+              ? tokenAmount
+              : Math.min(tokenAmount, Math.floor((tokenAmount * covered) / paid))
+
+            const { data: rev, error: reverseErr } = await supabase.rpc('reverse_tokens_for_payment', {
+              p_key: `stripe:pi:${paymentIntentId}:token-reversal`,
               p_user_id: userId,
-              p_type: 'refund',
-              p_amount: -tokenAmount,
-              p_description: `Reversed ${tokenAmount} Hapi Tokens (${reason})`,
+              p_purchased: tokenAmount,
+              p_source: isDispute ? 'dispute' : 'refund',
+              p_source_tokens: sourceTokens,
+              p_reason: reason,
               p_metadata: {
                 reason,
                 stripe_event_id: event.id,
@@ -457,13 +478,13 @@ export async function POST(req: NextRequest) {
                 stripe_payment_intent_id: paymentIntentId,
               },
             })
-            if (reverseErr?.message?.includes('INSUFFICIENT_BALANCE')) {
-              // The buyer already spent the tokens; retrying can never succeed. Record and move on.
-              console.error(`[stripe/webhook] ${event.type}: cannot claw back ${tokenAmount} tokens from ${userId} (already spent) — manual review`)
-            } else {
-              must(reverseErr, 'token reversal')
-              console.log(`[stripe/webhook] ${event.type}: reversed ${tokenAmount} tokens for user ${userId} (${reason})`)
+            must(reverseErr, 'token reversal')
+            if (rev?.shortfall > 0) {
+              // The buyer already spent part of it; retrying cannot help. The function
+              // clawed back what was available and recorded the rest in money_exceptions.
+              console.error(`[stripe/webhook] ${event.type}: ${rev.shortfall} tokens not recoverable from ${userId} (already spent) — see money_exceptions`)
             }
+            console.log(`[stripe/webhook] ${event.type}: reversed ${rev?.reversed_now ?? 0} tokens for user ${userId} (${reason}); ${rev?.reversed_total ?? 0}/${tokenAmount} total`)
           }
         } else {
           console.log(`[stripe/webhook] ${event.type}: session ${session.id} is checkoutMode=${checkoutMode ?? 'unknown'} — no token reversal applicable`)

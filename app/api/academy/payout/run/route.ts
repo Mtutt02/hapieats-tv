@@ -12,7 +12,7 @@
  *
  * Economics (all integer cents):
  *   gross_cents = sum over that month's pro_revenue_ledger rows of
- *     (amount collected - amount refunded). The ledger is written by the Stripe
+ *     (amount collected - amount refunded - amount disputed). The ledger is written by the Stripe
  *     webhook from real paid Pro invoices (invoice.paid / charge.refunded), so
  *     the pool is never an estimate from subscriber count x list price.
  *   pool_cents = round(gross_cents * PRO_POOL_PCT)
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
   // ── Gross: Pro invoices Stripe actually collected that month, net of refunds ─
   const { data: revenue, error: revErr } = await service
     .from('pro_revenue_ledger')
-    .select('amount_cents, refunded_cents')
+    .select('amount_cents, refunded_cents, disputed_cents')
     .eq('month', month)
   if (revErr) {
     console.error('[academy/payout] revenue ledger query error:', revErr)
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     )
   }
   const grossCents = (revenue ?? []).reduce(
-    (sum, r) => sum + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0),
+    (sum, r) => sum + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0) - Number(r.disputed_cents ?? 0), 0),
     0,
   )
   const poolCents = Math.round(grossCents * PRO_POOL_PCT)

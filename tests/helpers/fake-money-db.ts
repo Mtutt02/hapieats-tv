@@ -32,6 +32,8 @@ const UNIQUES: Record<string, string[][]> = {
   class_enrollments: [['class_id', 'user_id']],
   course_enrollments: [['course_id', 'user_id']],
   program_enrollments: [['program_id', 'user_id']],
+  token_reversals: [['effect_key']],
+  money_exceptions: [['dedupe_key']],
 }
 
 export class MoneyDb {
@@ -159,6 +161,37 @@ export class MoneyDb {
   }
   sql_check_monetization_auto_unlock() { return null }
 
+  /** Mirrors reverse_tokens_for_payment (section 8 of the migration). */
+  sql_reverse_tokens_for_payment(a: Row) {
+    return this.atomically(() => {
+      if (!['refund', 'dispute'].includes(a.p_source)) this.raise('bad source')
+      if (!(a.p_purchased > 0)) this.raise('purchased must be positive')
+      let r = this.rows('token_reversals').find(x => x.effect_key === a.p_key)
+      if (!r) this.rows('token_reversals').push((r = { effect_key: a.p_key, user_id: a.p_user_id, purchased: a.p_purchased, refund_tokens: 0, dispute_tokens: 0, reversed: 0 }))
+      const clamp = Math.min(Math.max(Number(a.p_source_tokens) || 0, 0), r.purchased)
+      if (a.p_source === 'refund') r.refund_tokens = Math.max(r.refund_tokens, clamp)
+      else r.dispute_tokens = Math.max(r.dispute_tokens, clamp)
+      const target = Math.min(r.purchased, r.refund_tokens + r.dispute_tokens)
+      const delta = target - r.reversed
+      let debit = 0
+      if (delta > 0) {
+        let w = this.rows('hapi_tokens').find(x => x.user_id === a.p_user_id)
+        if (!w) this.rows('hapi_tokens').push((w = { user_id: a.p_user_id, balance: 0 }))
+        debit = Math.min(delta, Math.max(w.balance, 0))
+        if (debit > 0) this.sql_record_token_movement({ p_user_id: a.p_user_id, p_type: 'refund', p_amount: -debit, p_metadata: a.p_metadata })
+      }
+      r.reversed += debit
+      const key = `${a.p_key}:shortfall`
+      const ex = this.rows('money_exceptions').find(x => x.dedupe_key === key)
+      if (delta > debit) {
+        const row = { dedupe_key: key, kind: 'token_clawback_shortfall', user_id: a.p_user_id, ref: a.p_key, amount: delta - debit, resolved_at: null }
+        if (ex) Object.assign(ex, row)
+        else this.rows('money_exceptions').push(row)
+      } else if (ex && !ex.resolved_at) ex.resolved_at = this.now
+      return { target, reversed_now: debit, reversed_total: r.reversed, shortfall: Math.max(delta - debit, 0) }
+    })
+  }
+
   sql_credit_flavor_once(a: Row) {
     if (!this.effectOnce(a.p_key, 'flavor')) return false
     const w = this.rows('flavor_wallets').find(r => r.user_id === a.p_user_id)
@@ -209,7 +242,7 @@ export class MoneyDb {
       if (pool.distributed) return { status: 'already_distributed' }
       const ledger = this.rows('pro_revenue_ledger').filter(r => r.month === a.p_month)
       if (ledger.length === 0) return { status: 'no_invoices' }
-      const gross = ledger.reduce((s, r) => s + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0), 0), 0)
+      const gross = ledger.reduce((s, r) => s + Math.max(Number(r.amount_cents) - Number(r.refunded_cents ?? 0) - Number(r.disputed_cents ?? 0), 0), 0)
       if (gross !== Number(a.p_expected_gross)) this.raise('GROSS_CHANGED')
       const split = (a.p_earnings as Row[]).reduce((s, e) => s + Number(e.cents), 0)
       if ((a.p_earnings as Row[]).some(e => !(Number(e.cents) >= 0)) || a.p_pool_cents < 0 || a.p_pool_cents > gross || split > a.p_pool_cents) {
