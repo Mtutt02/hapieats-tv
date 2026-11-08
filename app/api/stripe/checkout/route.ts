@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'subscription',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [{ price: channelRecord.stripe_price_id, quantity: 1 }],
         subscription_data: {
           metadata: { userId: user.id, channelId },
@@ -122,6 +123,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'payment',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [
           {
             price_data: {
@@ -142,6 +144,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
         ...baseParams,
         mode: 'subscription',
+        payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
         line_items: [
           {
             price_data: {

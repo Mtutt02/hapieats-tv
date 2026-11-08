@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     success_url: successUrl ?? `${process.env.NEXT_PUBLIC_APP_URL}/live?tokens=purchased`,
     cancel_url: cancelUrl ?? `${process.env.NEXT_PUBLIC_APP_URL}/live`,
     line_items: [

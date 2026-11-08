@@ -85,6 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: { programId: 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       success_url: `${safeSuccess}?program_enrolled=1`,
       cancel_url: safeCancel,
       line_items: [{

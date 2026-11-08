@@ -73,8 +73,19 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (event.type) {
-      case 'checkout.session.completed': {
+      // Fulfilment runs ONLY once the money is in. With a delayed payment method
+      // (ACH / bank debit) `completed` arrives with payment_status 'unpaid'; the
+      // buyer must not get the item then. `async_payment_succeeded` re-enters this
+      // same path later (every effect below is idempotent), and
+      // `async_payment_failed` goes to the restore case. 'no_payment_required' is
+      // a zero-amount session (nothing to collect), so it fulfils immediately.
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session
+        if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+          console.log(`[stripe/webhook] ${event.type} ${session.id}: payment_status=${session.payment_status} — not fulfilling until paid`)
+          break
+        }
         const { userId, checkoutMode, videoId } = session.metadata ?? {}
 
         // HapiEats Pro all-access subscription

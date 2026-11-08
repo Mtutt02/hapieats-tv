@@ -118,7 +118,7 @@ describe('PAYMENTS_PAUSED=1', () => {
 
     const res = await POST(req('/api/stripe/webhook', {
       id: 'evt_pause', type: 'checkout.session.completed',
-      data: { object: { id: 'cs_p', metadata: { userId: 'u1', checkoutMode: 'token_purchase', tokenAmount: '500' } } },
+      data: { object: { id: 'cs_p', payment_status: 'paid', metadata: { userId: 'u1', checkoutMode: 'token_purchase', tokenAmount: '500' } } },
     }))
 
     expect(res.status).toBe(200)

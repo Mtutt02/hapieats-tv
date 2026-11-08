@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'payment',
+    payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
     success_url: safeUrl(successUrl, `${appOrigin}/studio/credits?repaid=true`),
     cancel_url: safeUrl(cancelUrl, `${appOrigin}/studio/credits`),
     line_items: [

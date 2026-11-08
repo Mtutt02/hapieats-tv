@@ -152,6 +152,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
       success_url: safeSuccess,
       cancel_url: safeCancel,
@@ -275,6 +276,7 @@ export async function POST(req: NextRequest) {
       session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      payment_method_types: ['card'], // cards only: no delayed methods that complete unpaid
       expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
       success_url: safeSuccess,
       cancel_url: safeCancel,
