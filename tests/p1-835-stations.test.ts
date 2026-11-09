@@ -76,3 +76,14 @@ describe('SQL filters match the predicate', () => {
     expect(counts.get('s1')).toBe(3)
   })
 })
+
+describe('render route', () => {
+  it('answers 503 render_offline, never success', async () => {
+    const { POST } = await import('@/app/api/studio/render/route')
+    const res = await POST()
+    const body = await res.json()
+    expect(res.status).toBe(503)
+    expect(body.success).toBe(false)
+    expect(body.code).toBe('render_offline')
+  })
+})
