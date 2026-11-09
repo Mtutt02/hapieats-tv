@@ -13,17 +13,13 @@ export function isStationVideo(v: StationVideoRow): boolean {
   return v.status === 'ready' && v.visibility === 'public' && v.is_clip !== true
 }
 
-interface Filterable<T> {
-  eq(column: string, value: string): T
-  or(filters: string): T
-}
-
 /** Same rule as isStationVideo, as PostgREST filters. (`neq is_clip true` would drop null rows.) */
-export function applyStationVideoFilters<T extends Filterable<T>>(query: T): T {
-  return query
+export function applyStationVideoFilters<T>(query: T): T {
+  // Loosely typed on purpose: Supabase's builder generics blow up tsc if constrained here.
+  return (query as any)
     .eq('status', 'ready')
     .eq('visibility', 'public')
-    .or('is_clip.is.null,is_clip.eq.false')
+    .or('is_clip.is.null,is_clip.eq.false') as T
 }
 
 export function countByStation(rows: StationVideoRow[]): Map<string, number> {
