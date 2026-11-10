@@ -9,6 +9,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { createServiceClient } from '@/lib/supabase/server'
 import StationFollowButton from '@/components/stations/StationFollowButton'
+import { getStationVideos as queryStationVideos, getStationVideoCount } from '@/lib/stations/videos'
 
 interface PageProps {
   params: { slug: string }
@@ -28,18 +29,16 @@ async function getStation(slug: string) {
 
 async function getStationVideos(stationId: string) {
   const supabase = createServiceClient()
-  const { data } = await supabase
-    .from('videos')
-    .select(`
-      id, title, thumbnail_url, view_count, duration, created_at,
-      channel:channels(name, thumbnail_url)
-    `)
-    .eq('station_id', stationId)
-    .eq('status', 'ready')
-    .neq('is_clip', true)
-    .order('created_at', { ascending: false })
-    .limit(48)
-  return data ?? []
+  const [{ videos, failed }, total] = await Promise.all([
+    queryStationVideos<any>(
+      supabase,
+      stationId,
+      'id, title, thumbnail_url, view_count, duration, created_at, channel:channels(name, thumbnail_url)',
+      48,
+    ),
+    getStationVideoCount(supabase, stationId),
+  ])
+  return { videos, failed, total }
 }
 
 export async function generateMetadata({ params }: PageProps) {
@@ -51,7 +50,7 @@ export default async function StationPage({ params }: PageProps) {
   const station = await getStation(params.slug)
   if (!station) notFound()
 
-  const videos = await getStationVideos(station.id)
+  const { videos, failed, total } = await getStationVideos(station.id)
 
   return (
     <AppShell>
@@ -84,7 +83,7 @@ export default async function StationPage({ params }: PageProps) {
                 </span>
                 <span className="flex items-center gap-1">
                   <Video className="h-3.5 w-3.5" />
-                  {videos.length > 0 ? videos.length : station.video_count} videos
+                  {total} videos
                 </span>
               </div>
             </div>
@@ -106,8 +105,8 @@ export default async function StationPage({ params }: PageProps) {
           {videos.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
               <span className="text-5xl block mb-4">{station.icon}</span>
-              <p className="font-medium mb-1">No videos yet in this station</p>
-              <p className="text-sm mb-4">Be the first to upload here.</p>
+              <p className="font-medium mb-1">{failed ? "Couldn't load videos right now" : 'No videos here yet'}</p>
+              <p className="text-sm mb-4">{failed ? 'Please refresh in a moment.' : 'Be the first to upload here.'}</p>
               <Link href={`/studio/upload?stationId=${station.id}`}>
                 <Button size="sm">Upload a video</Button>
               </Link>

@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { one } from '@/lib/supabase/relation'
 import AppShell from '@/components/layout/AppShell'
 import TVBrowser, { TVChannel } from '@/components/tv/TVBrowser'
+import { applyStationVideoFilters } from '@/lib/stations/videos'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,12 +30,9 @@ export default async function TVPage() {
 
     const [{ data: stationRows }, { data: videoRows }, { data: liveStreams }] = await Promise.all([
       supabase.from('stations').select('id, slug, name, icon, description, theme').in('slug', STATION_DIAL),
-      supabase
+      applyStationVideoFilters(supabase
         .from('videos')
-        .select('title, mux_playback_id, duration, station_id')
-        .eq('status', 'ready')
-        .eq('visibility', 'public')
-        .eq('is_clip', false)
+        .select('title, mux_playback_id, duration, station_id'))
         .not('mux_playback_id', 'is', null)
         .order('published_at', { ascending: true }),
       supabase

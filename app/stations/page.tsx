@@ -4,17 +4,22 @@ import Link from 'next/link'
 import { formatViews } from '@/lib/utils'
 import { Users, Video } from 'lucide-react'
 import { createServiceClient } from '@/lib/supabase/server'
+import { getStationVideoCounts, withLiveCounts } from '@/lib/stations/videos'
 
 export const metadata = { title: 'Stations', description: 'Explore themed food communities on HapiEats TV. Join a station or create your own.' }
 export const revalidate = 60 // revalidate every 60s
 
 async function getStations() {
   const supabase = createServiceClient()
-  const { data } = await supabase
-    .from('stations')
-    .select('id, slug, name, description, icon, cover_url, follower_count, video_count')
-    .order('follower_count', { ascending: false })
-  return data ?? []
+  const [{ data }, counts] = await Promise.all([
+    supabase
+      .from('stations')
+      .select('id, slug, name, description, icon, cover_url, follower_count, video_count')
+      .order('follower_count', { ascending: false }),
+    getStationVideoCounts(supabase),
+  ])
+  // The stored video_count is never updated; show the live count the station page lists.
+  return withLiveCounts(data ?? [], counts)
 }
 
 export default async function StationsPage() {

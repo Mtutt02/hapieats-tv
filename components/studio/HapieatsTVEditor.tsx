@@ -32,6 +32,7 @@ export default function HapieatsTVEditor() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [renderUrl, setRenderUrl] = useState<string | null>(null);
+  const [renderNotice, setRenderNotice] = useState<string | null>(null);
   const [projectTitle, setProjectTitle] = useState("HapieatsTV");
   const [currentTime, setCurrentTime] = useState(0);
 
@@ -162,8 +163,10 @@ export default function HapieatsTVEditor() {
   // ── Render ──
   const exportProject = useCallback(async () => {
     if (clips.length === 0) return;
+    if (rendering) return; // no double-submit
     setRendering(true);
     setRenderUrl(null);
+    setRenderNotice(null);
 
     const inputProps = {
       title: projectTitle,
@@ -191,14 +194,16 @@ export default function HapieatsTVEditor() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(inputProps),
       });
-      const data = await res.json();
-      if (data.success) setRenderUrl(data.videoUrl);
-      else alert(`Render failed: ${data.error}`);
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data.videoUrl) setRenderUrl(data.videoUrl);
+      else if (data?.code === "render_offline" || res.status === 503) setRenderNotice("Rendering is offline right now, try again later.");
+      else setRenderNotice("Export didn't finish. Please try again.");
     } catch {
-      alert("Render engine connecting soon.");
+      setRenderNotice("Couldn't reach the render service. Check your connection and try again.");
+    } finally {
+      setRendering(false);
     }
-    setRendering(false);
-  }, [clips, projectTitle, selectedTemplate, musicTrack, voiceover, duckEnabled, templateFields]);
+  }, [rendering, clips, projectTitle, selectedTemplate, musicTrack, voiceover, duckEnabled, templateFields]);
 
   // ── Recorder timer ──
   useEffect(() => {
@@ -267,6 +272,7 @@ export default function HapieatsTVEditor() {
                 <Download size={18} /> Download MP4
               </a>
             )}
+            {renderNotice && <p role="status" style={{ fontSize: 12, opacity: 0.8, margin: 0 }}>{renderNotice}</p>}
             <button onClick={exportProject} disabled={rendering || clips.length === 0} className="htv-export">
               <Download size={18} /> {rendering ? "Rendering…" : "Export"}
             </button>
