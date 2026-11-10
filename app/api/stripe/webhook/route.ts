@@ -297,7 +297,32 @@ export async function POST(req: NextRequest) {
         // purchase row. Unique (buyer_id, video_id).
         if (checkoutMode === 'credit_ppv' && userId) {
           const creditVideoId = session.metadata?.videoId ?? ''
-          if (creditVideoId) {
+          const creditRef = session.metadata?.checkoutRef
+          if (creditVideoId && creditRef) {
+            // ONE transaction under the per-checkout lock (fulfil_credit_ppv, round 5): purchase row +
+            // state row + claim release. If the abandoned-checkout sweeper (or the buyer's next tap)
+            // already handed the credits back before this delivery got through, they are taken again
+            // here (or, if spent meanwhile, the shortfall goes to money_exceptions) - the buyer can
+            // never end up with the video AND the credits. A restore that arrives AFTER this refuses.
+            const { data: outcome, error } = await supabase.rpc('fulfil_credit_ppv', {
+              p_buyer: userId,
+              p_video: creditVideoId,
+              p_ref: creditRef,
+              p_gift: Number(session.metadata?.giftUsed ?? 0) || 0,
+              p_loan: Number(session.metadata?.loanUsed ?? 0) || 0,
+              p_payment_intent: (session.payment_intent as string | null) ?? null,
+              p_amount_cents: session.amount_total ?? 0,
+            })
+            must(error, 'credit ppv fulfilment')
+            if (outcome?.status === 'fulfilled_after_restore') {
+              console.error(
+                `[webhook] credit_ppv ${creditRef}: paid AFTER its credits were restored; credits taken again` +
+                  (Number(outcome.shortfall) > 0 ? ` (${outcome.shortfall} could not be taken - see money_exceptions)` : ''),
+              )
+            }
+            console.log(`[webhook] credit_ppv unlocked video ${creditVideoId} for user ${userId}`)
+          } else if (creditVideoId) {
+            // Session created before checkoutRef existed: no state row to arbitrate, plain idempotent upsert.
             const { error } = await supabase.from('purchases').upsert(
               {
                 buyer_id: userId,
@@ -310,8 +335,6 @@ export async function POST(req: NextRequest) {
             )
             must(error, 'credit ppv purchase')
             console.log(`[webhook] credit_ppv unlocked video ${creditVideoId} for user ${userId}`)
-            // fulfilled: free the (buyer, video) claim /api/credits/checkout took before the debit
-            await releaseCreditClaim(supabase, userId, creditVideoId, session.metadata?.checkoutRef)
           }
         }
 

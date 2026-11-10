@@ -36,6 +36,7 @@ const UNIQUES: Record<string, string[][]> = {
   money_exceptions: [['dedupe_key']],
   challenge_votes: [['entry_id', 'voter_id']],
   pending_credit_checkouts: [['buyer_id', 'video_id']],
+  credit_checkout_outcomes: [['checkout_ref']],
 }
 
 export class MoneyDb {
@@ -218,14 +219,74 @@ export class MoneyDb {
     return actual
   }
 
+  /** Mirrors restore_credits_once (round 5): refuses once the checkout was fulfilled, records 'restored'. */
   sql_restore_credits_once(a: Row) {
+    const ref = /^credit-checkout:(.+):restore$/.exec(a.p_key)?.[1]
+    if (ref) {
+      const o = this.rows('credit_checkout_outcomes').find(r => r.checkout_ref === ref)
+      if (o && ['fulfilled', 'fulfilled_after_restore'].includes(o.outcome)) return false
+    }
     if (!this.effectOnce(a.p_key, 'credit_restore')) return false
     let c = this.rows('app_credits').find(r => r.user_id === a.p_user_id)
     if (!c) this.rows('app_credits').push((c = { user_id: a.p_user_id, gift_balance: 0, loan_balance: 0, loan_repaid: 0 }))
     c.gift_balance = Math.round((Number(c.gift_balance) + Number(a.p_gift)) * 100) / 100
     c.loan_balance = Math.round((Number(c.loan_balance) + Number(a.p_loan)) * 100) / 100
     this.rows('credit_ledger').push({ user_id: a.p_user_id, entry_type: 'restore_credit', amount: Number(a.p_gift) + Number(a.p_loan), reference_id: a.p_ref })
+    if (ref && !this.rows('credit_checkout_outcomes').some(r => r.checkout_ref === ref)) {
+      this.rows('credit_checkout_outcomes').push({ checkout_ref: ref, buyer_id: a.p_user_id, outcome: 'restored' })
+    }
     return true
+  }
+
+  /** Mirrors fulfil_credit_ppv (round 5): purchase + state row + claim release; re-debits when already restored. */
+  sql_fulfil_credit_ppv(a: Row) {
+    return this.atomically(() => {
+      if (!a.p_ref) this.raise('fulfil_credit_ppv: checkout ref required')
+      const o = this.rows('credit_checkout_outcomes').find(r => r.checkout_ref === a.p_ref)
+      if (!this.rows('purchases').some(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video)) {
+        this.insertRow('purchases', {
+          buyer_id: a.p_buyer, video_id: a.p_video, stripe_payment_intent_id: a.p_payment_intent,
+          amount: a.p_amount_cents, credit_funded: true,
+        })
+      }
+      const pi = this.rows('pending_credit_checkouts').findIndex(r => r.buyer_id === a.p_buyer && r.video_id === a.p_video && r.checkout_ref === a.p_ref)
+      if (pi >= 0) this.rows('pending_credit_checkouts').splice(pi, 1)
+      if (o && ['fulfilled', 'fulfilled_after_restore'].includes(o.outcome)) return { status: 'already' }
+      const restored = o?.outcome === 'restored' || this.rows('money_effects').some(r => r.effect_key === `credit-checkout:${a.p_ref}:restore`)
+      let dg = 0, dl = 0, short = 0
+      if (restored && Number(a.p_gift ?? 0) + Number(a.p_loan ?? 0) > 0) {
+        let c = this.rows('app_credits').find(r => r.user_id === a.p_buyer)
+        if (!c) this.rows('app_credits').push((c = { user_id: a.p_buyer, gift_balance: 0, loan_balance: 0, loan_repaid: 0 }))
+        dg = Math.min(Number(a.p_gift ?? 0), Number(c.gift_balance))
+        dl = Math.min(Number(a.p_loan ?? 0), Number(c.loan_balance))
+        short = Math.round(((Number(a.p_gift ?? 0) - dg) + (Number(a.p_loan ?? 0) - dl)) * 100) / 100
+        c.gift_balance = Math.round((Number(c.gift_balance) - dg) * 100) / 100
+        c.loan_balance = Math.round((Number(c.loan_balance) - dl) * 100) / 100
+        if (dg > 0) this.rows('credit_ledger').push({ user_id: a.p_buyer, entry_type: 'spend_gift', amount: dg, reference_id: a.p_video, reference_type: 'ppv' })
+        if (dl > 0) this.rows('credit_ledger').push({ user_id: a.p_buyer, entry_type: 'spend_loan', amount: dl, reference_id: a.p_video, reference_type: 'ppv' })
+        if (short > 0 && !this.rows('money_exceptions').some(r => r.dedupe_key === `restored-then-paid:${a.p_ref}`)) {
+          this.rows('money_exceptions').push({ dedupe_key: `restored-then-paid:${a.p_ref}`, kind: 'restored_then_paid', user_id: a.p_buyer, ref: a.p_ref, amount: short, resolved_at: null })
+        }
+      }
+      const outcome = restored ? 'fulfilled_after_restore' : 'fulfilled'
+      if (o) o.outcome = outcome
+      else this.rows('credit_checkout_outcomes').push({ checkout_ref: a.p_ref, buyer_id: a.p_buyer, video_id: a.p_video, outcome })
+      return { status: outcome, redebited_gift: dg, redebited_loan: dl, shortfall: short }
+    })
+  }
+
+  /** Mirrors request_creator_payout (round 5): the whole decision is one atomic step (row lock in SQL). */
+  sql_request_creator_payout(a: Row) {
+    if (!(a.p_amount_cents >= 100)) this.raise('request_creator_payout: minimum payout is 100 cents')
+    const w = this.rows('creator_wallets').find(r => r.creator_id === a.p_creator)
+    if (!w) return { status: 'not_found' }
+    if (w.payout_status === 'pending') return { status: 'pending' }
+    if (w.redeemable_cents < a.p_amount_cents) return { status: 'insufficient', available: w.redeemable_cents }
+    if (!w.stripe_connect_id) return { status: 'stripe_required' }
+    w.payout_status = 'pending'
+    w.redeemable_cents -= a.p_amount_cents
+    this.rows('token_ledger').push({ user_id: a.p_creator, type: 'adjustment', amount: 0, metadata: { type: 'payout_request', amount_cents: a.p_amount_cents } })
+    return { status: 'ok', amount_cents: a.p_amount_cents }
   }
 
   private walletAdd(creatorId: string, tokens: number, cents: number) {
@@ -325,9 +386,9 @@ export class MoneyDb {
     this.rows('pending_credit_checkouts').splice(i, 1)
     if (owned) return 'owned'
     if (!spent || Number(row.gift_used) + Number(row.loan_used) <= 0) return 'not_debited'
-    this.sql_restore_credits_once({ p_key: `credit-checkout:${row.checkout_ref}:restore`, p_user_id: a.p_buyer,
+    const done = this.sql_restore_credits_once({ p_key: `credit-checkout:${row.checkout_ref}:restore`, p_user_id: a.p_buyer,
       p_gift: row.gift_used, p_loan: row.loan_used, p_ref: row.checkout_ref })
-    return 'restored'
+    return done ? 'restored' : 'already_settled'
   }
   sql_peek_credit_checkout(a: Row) {
     return this.atomically(() => {

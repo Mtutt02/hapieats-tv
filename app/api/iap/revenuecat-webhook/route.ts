@@ -88,6 +88,18 @@ export async function POST(req: NextRequest) {
   const appUserId = String(event.app_user_id ?? '')
   const productId = String(event.product_id ?? '')
 
+  // Sandbox / TestFlight purchases are free for the tester, so they must never credit real tokens or
+  // activate real Creator Pro on a production deployment (a tester could otherwise mint tokens, gift
+  // them to a creator and cash out). RevenueCat sends environment SANDBOX | PRODUCTION on every event;
+  // anything present that is not PRODUCTION is skipped. Acknowledged with 200 so RevenueCat does not
+  // retry, and skipped BEFORE the claim so no iap_events row is written. Outside production builds
+  // (dev / preview tests) sandbox events still go through so the purchase flow can be exercised.
+  const environment = event.environment == null ? null : String(event.environment).toUpperCase()
+  if (environment !== null && environment !== 'PRODUCTION' && process.env.NODE_ENV === 'production') {
+    console.log(`[iap] ${String(event.type ?? '')} ${String(event.id ?? '')}: environment ${environment} on a production deployment - ignored`)
+    return NextResponse.json({ ok: true, skipped: 'sandbox' })
+  }
+
   // Anonymous RevenueCat ids (never signed in) can't be credited
   if (!appUserId || appUserId.startsWith('$RCAnonymousID')) {
     return NextResponse.json({ ok: true, skipped: 'anonymous user' })

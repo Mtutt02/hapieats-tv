@@ -53,33 +53,32 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const { data: wallet } = await service.from('creator_wallets').select('redeemable_cents, payout_status, stripe_connect_id').eq('creator_id', user.id).single()
-
-  if (!wallet) return NextResponse.json({ error: 'Wallet not found' }, { status: 404 })
-  if (wallet.payout_status === 'pending') return NextResponse.json({ error: 'A payout is already pending' }, { status: 409 })
-  if (wallet.redeemable_cents < amount_cents) {
-    return NextResponse.json({ error: 'Insufficient redeemable balance', available: wallet.redeemable_cents }, { status: 402 })
-  }
-  if (!wallet.stripe_connect_id) {
-    return NextResponse.json({ error: 'Stripe Connect not set up. Connect your bank account first.', stripe_required: true }, { status: 402 })
-  }
-
-  // Mark payout as pending (actual Stripe transfer handled by admin/cron)
-  await service.from('creator_wallets').update({
-    payout_status: 'pending',
-    redeemable_cents: wallet.redeemable_cents - amount_cents,
-    updated_at: new Date().toISOString(),
-  }).eq('creator_id', user.id)
-
-  // Log in token ledger
-  await service.from('token_ledger').insert({
-    user_id: user.id,
-    type: 'adjustment',
-    amount: 0,
-    balance_after: 0,
-    description: `Payout requested: $${(amount_cents / 100).toFixed(2)}`,
-    metadata: { type: 'payout_request', amount_cents },
+  // The whole decision (wallet row locked FOR UPDATE -> checks -> mark pending, debit, log the
+  // request) is ONE database function (request_creator_payout, round 5). It used to read the wallet,
+  // check it and write it back as separate steps, so two concurrent requests both passed. The actual
+  // Stripe transfer is still handled by admin/cron.
+  const { data: result, error } = await service.rpc('request_creator_payout', {
+    p_creator: user.id,
+    p_amount_cents: Math.floor(Number(amount_cents)),
   })
+  if (error || !result) {
+    console.error('[creator/wallet] request_creator_payout failed:', error)
+    return NextResponse.json({ error: 'Could not request the payout. Please try again.' }, { status: 500 })
+  }
 
-  return NextResponse.json({ success: true, payout_requested_cents: amount_cents })
+  switch (result.status) {
+    case 'ok':
+      return NextResponse.json({ success: true, payout_requested_cents: amount_cents })
+    case 'not_found':
+      return NextResponse.json({ error: 'Wallet not found' }, { status: 404 })
+    case 'pending':
+      return NextResponse.json({ error: 'A payout is already pending' }, { status: 409 })
+    case 'insufficient':
+      return NextResponse.json({ error: 'Insufficient redeemable balance', available: result.available }, { status: 402 })
+    case 'stripe_required':
+      return NextResponse.json({ error: 'Stripe Connect not set up. Connect your bank account first.', stripe_required: true }, { status: 402 })
+    default:
+      console.error('[creator/wallet] unexpected request_creator_payout result:', result)
+      return NextResponse.json({ error: 'Could not request the payout. Please try again.' }, { status: 500 })
+  }
 }
