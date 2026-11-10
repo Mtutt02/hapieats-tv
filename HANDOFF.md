@@ -232,3 +232,73 @@ select p.oid::regprocedure, has_function_privilege('authenticated', p.oid, 'exec
 - Schedule `sweep_stale_credit_checkouts`.
 - `goals/[id]/contribute` pause decision, `components/PauseStatus.tsx` caching, `wallet_add` reporting label (#17, #19) — unchanged from round 3.
 - Test for the `fetch` fallback in `lib/stripe-shapes.ts` (needs a network stub) — NOT VERIFIED above.
+
+---
+
+# ROUND 5 (2026-11-09) - Fable review fixes: money-table lockdown, fulfil/restore race, sandbox, payout lock
+
+Branch `marlowe/p0-833-money`, base `76ac06a`. New migration: **`supabase/migrations/20261109_money_round5_833.sql`** (apply AFTER `20261107_money_fixes_833.sql`).
+Not merged, **no migration applied to any live database**, nothing deployed, no Stripe / RevenueCat change. `PAYMENTS_PAUSED` / `CREATOR_PAYOUTS_PAUSED` untouched.
+
+## Per finding
+
+| # | Finding (Fable review 2026-11-09, hub #7164 / #7165) | Status | What changed / proof |
+|---|---|---|---|
+| 1 | **P0** any signed-in user can write their own `hapi_tokens.balance`, `creator_wallets.redeemable_cents`, `creator_streaks`, paid `program_enrollments`, `challenge_votes`, `goal_contributions` | **FIXED** (migration §1; NOT yet on prod) | Write policies dropped (`hapi_tokens_own`, `creator_wallets_own`, `streaks_own`, `votes_own`, `contributions_insert`, `program_enroll_own`), SELECT-only policies recreated, and `INSERT/UPDATE/DELETE/TRUNCATE` revoked from `anon, authenticated` on the five money tables. `challenge_entries` and `creator_goals` keep column grants for the safe columns only (title/description/...), so `vote_count`, `token_vote_total`, `status`, `final_rank`, `current_tokens` can no longer be written by users. `program_enrollments`: a user may insert only their own `active` row in a published FREE program (the app's free-enrol route still works) and read/leave their own. The three trigger functions behind these tables now pin `search_path`. Money still moves only through the service_role-only SECURITY DEFINER RPCs (they run as owner, so unaffected). **Found while testing:** `creator_wallets_public` was already dropped by `20260703_security_patches.sql`, so `creator_wallets_own` was the owner's only read path; the migration adds `creator_wallets_own_read` (SELECT) so the mobile studio tab keeps working. Proof: `supabase/sqltest/test5.mjs` P0 block (acts as `authenticated` with a JWT subject): **failing-first** run without the migration (`SKIP_R5=1`) shows the exact attack succeeding (`balance=1000000`, `redeemable=500000`, `streak=90`, vote tally `1000000`, goal `completed`), with the migration all are `permission denied`, plus RPC path still works (`credit_tokens_once`, `wallet_add`, `update_creator_streak`, `cast_paid_vote` incl. the definer vote trigger). |
+| 2 | **P1** partial-credit PPV: confirmation fails once, credits restored by sweeper/next tap, Stripe retry then delivers the video -> buyer keeps video AND credits | **FIXED** (migration §2 + webhook; NOT yet on prod) | `credit_checkout_outcomes` = one state row per checkout ref (`restored` / `fulfilled` / `fulfilled_after_restore`). `restore_credits_once` and the new `fulfil_credit_ppv(...)` take the same advisory lock per ref. Fulfil first -> a later restore returns false and moves nothing. Restore first -> the paid webhook delivers the video, takes the credits again (ledger `spend_gift`/`spend_loan`), and if the buyer spent them meanwhile takes what is left and writes a `money_exceptions` row `restored_then_paid` with the shortfall. A restore made before this migration (only a `money_effects` key) is recognised. The webhook `credit_ppv` branch calls the RPC (purchase + state + claim release in one transaction); sessions without `checkoutRef` keep the old upsert. `settle_credit_checkout` now reports `already_settled` instead of claiming `restored` when nothing was restored. Proof: SQL test5 P1 (13), vitest `round5` P1 (7) incl. the exact review scenario. Flavor mode not changed (no pending row there; no sweeper path). |
+| 3 | **P1** RevenueCat SANDBOX events credit real tokens | **FIXED** (code only, no migration) | `revenuecat-webhook/route.ts`: if `event.environment` is present and not `PRODUCTION` (case-insensitive) and `NODE_ENV === 'production'` the event is acknowledged `{ok:true, skipped:'sandbox'}` BEFORE the claim (no `iap_events` row, no credit, no Creator Pro activation, no refund clawback). Dev/test builds still process sandbox events. An event with **no** `environment` field is processed as before (RevenueCat always sends it). Not done: keying the credit by `transaction_id` (the reviewer's optional point). Proof: vitest `round5` P3 (7). Still worth doing in the RevenueCat dashboard: set the webhook to Production-only; this is defence in depth. |
+| 4 | **P1** payout request is read-then-write, two concurrent requests both pass | **FIXED** (migration §3 + route; NOT yet on prod) | `request_creator_payout(creator, cents)`: wallet row `FOR UPDATE`, checks (not found / pending / insufficient / no Stripe Connect), mark pending + debit + ledger row in one transaction, returns a status the route maps to the same HTTP codes as before. The `payout_status = 'pending'` wallet state is the "one open request" guard (no separate table: nothing in the repo ever resets a request row, so a unique index on a new table would lock creators out). Proof: SQL test5 P4 (8), vitest `round5` P4 (6): 2 and 5 simultaneous requests give exactly one 200. Real lock contention NOT VERIFIED (PGlite single connection; the fake DB serialises each RPC). |
+| 5 | P2 goal contributions debit then write in separate statements | **NOT DONE** | The P0 lockdown stops the unpaid-row exploit (`contributions_insert`), but `app/api/goals/[id]/contribute/route.ts` is still debit -> insert -> read-then-upsert wallet. Needs a `contribute_to_goal` RPC like `send_live_gift`. |
+| 6 | P2 `deductCredits` optimistic update then separate ledger insert | **NOT DONE** | Unchanged (F11). Read the sweeper's "exactly once" as "once per recorded spend". |
+| 7 | P2 constraint-name pre-check | **DONE (docs)** | Added to the pre-checks below. |
+| 8 | P2 vitest/tsc not run by Fable | **RUN** | Counts below. |
+
+## Verification (iMac, 2026-11-09)
+
+- `npx tsc --noEmit` -> **exit 0**.
+- `npx vitest run` -> **Test Files 16 passed (16), Tests 179 passed (179)** (159 before; +20 in `tests/p0-833-round5.test.ts`). **Fail-on-old:** with the new fake DB and tests but the round-4 routes, 12 of the 20 fail (the other 8 pass on old code too: sandbox in dev mode, PRODUCTION env, no-environment, legacy no-ref session, abandoned-checkout restore, pause, ...).
+- SQL suite (PGlite), `cd supabase/sqltest && npm test`: `test.mjs` **23/23**, `test3.mjs` **35/35**, `test4.mjs` **41/41**, `test5.mjs` **51/51**. `SKIP_R5=1 node test5.mjs` (migration left out): **23 FAIL / 9 PASS, then stops on the missing function** - that is the failing-first baseline.
+- Regression: `test.mjs`, `test3.mjs`, `test4.mjs` also pass with the round-5 migration appended to the money migration (`MIG_DIR` copy; 23/23, 35/35, 41/41), i.e. redefining `restore_credits_once` / `settle_credit_checkout` broke nothing.
+- Round-5 migration applied twice on top of the money migration: PASS (test5 first two assertions).
+- `supabase/sqltest/apply.mjs` now only pre-applies migrations older than `20261107`; later ones are applied by the tests that need them. `stubs_missing.sql` gained `programs` / `program_enrollments` (verbatim from the academy migration) so the enrolment policy can be tested.
+
+## NOT VERIFIED
+
+- Nothing ran against the live database or Stripe/RevenueCat. The prod policy/grant state may differ from the repo (dashboard edits): run the pre-checks first.
+- Real lock contention for P1 (advisory lock) and P4 (`FOR UPDATE`): single-connection PGlite only.
+- `npm run build` not run (needs Supabase env).
+- Whether production RevenueCat sends `environment` on every event (documented behaviour; events without it are processed).
+
+## Production pre-checks for round 5 (read-only; run BEFORE applying `20261109_money_round5_833.sql`)
+
+```sql
+-- 1. which write policies exist today (the migration drops the ones named in the review; anything else listed here with cmd ALL/INSERT/UPDATE/DELETE on these tables is NOT touched and needs a look)
+select tablename, policyname, cmd, qual, with_check from pg_policies where schemaname='public'
+ and tablename in ('hapi_tokens','creator_wallets','creator_streaks','challenge_votes','goal_contributions',
+                   'program_enrollments','challenge_entries','creator_goals') order by 1,2;
+-- 2. CHECK constraint names on the ledgers (the 20261107 migration drops token_ledger_type_check / credit_ledger_entry_type_check BY NAME)
+select conname, pg_get_constraintdef(oid) from pg_constraint
+ where conrelid in ('public.token_ledger'::regclass,'public.credit_ledger'::regclass) and contype='c';
+-- 3. does the app write any of these tables as a signed-in user? (should be only program_enrollments, free programs)
+--    grep done in the repo: only app/api/academy/programs/[programId]/enroll/route.ts (user client). Nothing in mobile/ writes them.
+-- 4. the new objects must not exist yet
+select to_regclass('public.credit_checkout_outcomes');
+select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+ where n.nspname='public' and p.proname in ('fulfil_credit_ppv','request_creator_payout');
+-- 5. after applying: no write grant left for the API roles on the five tables (expect 0 rows)
+select table_name, grantee, privilege_type from information_schema.role_table_grants
+ where table_schema='public' and grantee in ('anon','authenticated')
+   and table_name in ('hapi_tokens','creator_wallets','creator_streaks','challenge_votes','goal_contributions')
+   and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE');
+-- 6. after applying: the two new functions are service_role only (expect false, false)
+select p.oid::regprocedure, has_function_privilege('authenticated', p.oid,'execute') a, has_function_privilege('anon', p.oid,'execute') b
+  from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('fulfil_credit_ppv','request_creator_payout');
+```
+
+## Kennedy / Marlowe - to go live
+
+1. Run the round-4 AND round-5 pre-checks; apply `20261107_money_fixes_833.sql` (if not yet) then **`20261109_money_round5_833.sql`**. The P0 hole is pre-existing and probably live today.
+2. Only then merge + deploy: the webhook now calls `fulfil_credit_ppv` and the wallet route calls `request_creator_payout`; both 500 until the migration is applied (a failing webhook is retried by Stripe, so it is safe, just noisy).
+3. Smoke after applying (still paused): as a normal signed-in user try `PATCH /rest/v1/hapi_tokens` -> expect 401/403 `permission denied`; free program enrol still works in the app.
+4. Optional: set the RevenueCat webhook to Production-only.
+5. Noticed, not fixed: `monetization_requests` and `credit_requests` allow a user to INSERT their own row with any `status` (WITH CHECK only tests the owner id). Whether anything trusts that status was not checked.
