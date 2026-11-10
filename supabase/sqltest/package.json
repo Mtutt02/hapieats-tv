@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "description": "Runs supabase/migrations on real Postgres (PGlite, in memory) and asserts the #833 money functions. Not part of the app build.",
-  "scripts": { "test": "node test.mjs && node test3.mjs && node test4.mjs" },
+  "scripts": { "test": "node test.mjs && node test3.mjs && node test4.mjs && node test5.mjs" },
   "devDependencies": { "@electric-sql/pglite": "^0.5.15" }
 }

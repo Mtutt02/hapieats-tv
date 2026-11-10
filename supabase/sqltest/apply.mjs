@@ -8,10 +8,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // MIG_DIR = supabase/migrations of the worktree under test
 export const dir = process.env.MIG_DIR || path.join(here, '..', 'migrations');
 export const NEW = '20261107_money_fixes_833.sql';
+// Migrations written AFTER the money migration (round 5+). They are applied by the tests that
+// need them, on top of NEW, never in the pre-pass below. SKIP_R5=1 leaves them out (failing-first runs).
+export const R5 = '20261109_money_round5_833.sql';
+export const LATER = fs.readdirSync(dir).filter(f => f.endsWith('.sql') && f > NEW).sort();
 export async function build(log = console.log) {
   const db = new PGlite('memory://', { extensions: { pgcrypto, uuid_ossp } });
   await db.exec(fs.readFileSync(path.join(here, 'bootstrap.sql'), 'utf8'));
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql') && f !== NEW).sort();
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql') && f < NEW).sort();
   // pass 1 in filename order; failed files (atomic, rolled back) retried until fixpoint
   let pending = files, round = 0;
   while (pending.length && round < 6) {

@@ -24,3 +24,24 @@ RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;
 REVOKE ALL ON FUNCTION public.bump_course_enrollment(UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.bump_course_enrollment(UUID) TO authenticated, service_role;
+
+-- r5: 20260711_academy.sql section 10 verbatim, minus the institutions FK (the academy migration cannot apply in PGlite)
+CREATE TABLE IF NOT EXISTS public.programs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), institution_id UUID,
+  owner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE, title TEXT NOT NULL, slug TEXT, description TEXT,
+  credential_tier TEXT NOT NULL DEFAULT 'skill' CHECK (credential_tier IN ('completion','skill','diploma')),
+  price NUMERIC(10,2) NOT NULL DEFAULT 0, stripe_price_id TEXT, is_published BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE public.programs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "programs_read" ON public.programs;
+CREATE POLICY "programs_read" ON public.programs FOR SELECT USING (true);
+CREATE TABLE IF NOT EXISTS public.program_enrollments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  program_id UUID NOT NULL REFERENCES public.programs(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active', completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (program_id, user_id));
+ALTER TABLE public.program_enrollments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "program_enroll_own" ON public.program_enrollments;
+CREATE POLICY "program_enroll_own" ON public.program_enrollments FOR ALL
+  USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
